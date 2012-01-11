@@ -1,0 +1,10 @@
+*~
+\#*
+\.\#*
+*.out
+_test*
+_gotest*
+_obj
+_cgo*
+_go_.[568]
+*.cgo2.o
