@@ -25,11 +25,23 @@ func TestMisc(t *testing.T) {
 	}
 	db.Exec("create table foo (id integer primary key, bar blob[16])")
 	db.Exec("insert or replace into foo (id, bar) values(?,?)", 0, blob)
-	b := make([]byte, 16)
-	db.QueryRow("select bar from foo where id = ?", 0).Scan(&b)
-	got := fmt.Sprintf("%x", b)
+
 	want := fmt.Sprintf("%x", blob)
-	if got != want {
-		t.Errorf("got %q; want %q", got, want)
+
+	b := make([]byte, 16)
+	err = db.QueryRow("select bar from foo where id = ?", 0).Scan(&b)
+	got := fmt.Sprintf("%x", b)
+	if err != nil {
+		t.Errorf("[]byte scan: %v", err)
+	} else if got != want {
+		t.Errorf("for []byte, got %q; want %q", got, want)
+	}
+
+	err = db.QueryRow("select bar from foo where id = ?", 0).Scan(&got)
+	want = string(blob)
+	if err != nil {
+		t.Errorf("string scan: %v", err)
+	} else if got != want {
+		t.Errorf("for string, got %q; want %q", got, want)
 	}
 }
