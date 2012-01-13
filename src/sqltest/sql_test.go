@@ -117,3 +117,18 @@ func testBlobs(t params) {
 		t.Errorf("for string, got %q; want %q", got, want)
 	}
 }
+
+func TestManyQueryRow_SQLite(t *testing.T) { sqlite.RunTest(t, testManyQueryRow) }
+func TestManyQueryRow_MySQL(t *testing.T)  { mysql.RunTest(t, testManyQueryRow) }
+
+func testManyQueryRow(t params) {
+	t.mustExec("create table foo (id integer primary key, name varchar(50))")
+	t.mustExec("insert into foo (id, name) values(?,?)", 1, "bob")
+	var name string
+	for i := 0; i < 10000; i++ {
+		err := t.QueryRow("select name from foo where id = ?", 1).Scan(&name)
+		if err != nil || name != "bob" {
+			t.Fatalf("on query %d: err=%v, name=%q", i, err, name)
+		}
+	}
+}
