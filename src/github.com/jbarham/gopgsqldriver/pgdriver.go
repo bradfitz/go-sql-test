@@ -27,28 +27,29 @@ static void freeCharArray(char **a, int size) {
 import "C"
 
 import (
-	"os"
-	"fmt"
-	"time"
-	"runtime"
-	"unsafe"
-	"strings"
-	"strconv"
 	"encoding/hex"
+	"errors"
 	"exp/sql"
 	"exp/sql/driver"
+	"fmt"
+	"io"
+	"runtime"
+	"strconv"
+	"strings"
+	"time"
+	"unsafe"
 )
 
-func connError(db *C.PGconn) os.Error {
-	return os.NewError("conn error:" + C.GoString(C.PQerrorMessage(db)))
+func connError(db *C.PGconn) error {
+	return errors.New("conn error:" + C.GoString(C.PQerrorMessage(db)))
 }
 
-func resultError(res *C.PGresult) os.Error {
+func resultError(res *C.PGresult) error {
 	serr := C.GoString(C.PQresultErrorMessage(res))
 	if serr == "" {
 		return nil
 	}
-	return os.NewError("result error: " + serr)
+	return errors.New("result error: " + serr)
 }
 
 const timeFormat = "2006-01-02 15:04:05.000000-07"
@@ -59,7 +60,7 @@ type postgresDriver struct{}
 // Each parameter setting is in the form 'keyword=value'.
 // See http://www.postgresql.org/docs/9.0/static/libpq-connect.html#LIBPQ-PQCONNECTDBPARAMS
 // for a list of recognized parameters.
-func (d *postgresDriver) Open(name string) (conn driver.Conn, err os.Error) {
+func (d *postgresDriver) Open(name string) (conn driver.Conn, err error) {
 	cparams := C.CString(name)
 	defer C.free(unsafe.Pointer(cparams))
 	db := C.PQconnectdb(cparams)
@@ -94,7 +95,7 @@ func (c *driverConn) exec(stmt string, args []interface{}) (cres *C.PGresult) {
 	return cres
 }
 
-func (c *driverConn) Exec(query string, args []interface{}) (res driver.Result, err os.Error) {
+func (c *driverConn) Exec(query string, args []interface{}) (res driver.Result, err error) {
 	cres := c.exec(query, args)
 	if err = resultError(cres); err != nil {
 		C.PQclear(cres)
@@ -105,14 +106,14 @@ func (c *driverConn) Exec(query string, args []interface{}) (res driver.Result, 
 	if ns == "" {
 		return driver.DDLSuccess, nil
 	}
-	rowsAffected, err := strconv.Atoi64(ns)
+	rowsAffected, err := strconv.ParseInt(ns, 10, 64)
 	if err != nil {
 		return
 	}
 	return driver.RowsAffected(rowsAffected), nil
 }
 
-func (c *driverConn) Prepare(query string) (driver.Stmt, os.Error) {
+func (c *driverConn) Prepare(query string) (driver.Stmt, error) {
 	// Generate unique statement name.
 	stmtname := strconv.Itoa(c.stmtNum)
 	cstmtname := C.CString(stmtname)
@@ -139,7 +140,7 @@ func (c *driverConn) Prepare(query string) (driver.Stmt, os.Error) {
 	return statement, nil
 }
 
-func (c *driverConn) Close() os.Error {
+func (c *driverConn) Close() error {
 	if c != nil && c.db != nil {
 		C.PQfinish(c.db)
 		c.db = nil
@@ -148,7 +149,7 @@ func (c *driverConn) Close() os.Error {
 	return nil
 }
 
-func (c *driverConn) Begin() (driver.Tx, os.Error) {
+func (c *driverConn) Begin() (driver.Tx, error) {
 	if _, err := c.Exec("BEGIN", nil); err != nil {
 		return nil, err
 	}
@@ -156,12 +157,12 @@ func (c *driverConn) Begin() (driver.Tx, os.Error) {
 	return c, nil
 }
 
-func (c *driverConn) Commit() (err os.Error) {
+func (c *driverConn) Commit() (err error) {
 	_, err = c.Exec("COMMIT", nil)
 	return
 }
 
-func (c *driverConn) Rollback() (err os.Error) {
+func (c *driverConn) Rollback() (err error) {
 	_, err = c.Exec("ROLLBACK", nil)
 	return
 }
@@ -185,21 +186,21 @@ func (s *driverStmt) exec(params []interface{}) *C.PGresult {
 	return C.PQexecPrepared(s.db, stmtName, C.int(len(params)), cparams, nil, nil, 0)
 }
 
-func (s *driverStmt) Exec(args []interface{}) (res driver.Result, err os.Error) {
+func (s *driverStmt) Exec(args []interface{}) (res driver.Result, err error) {
 	cres := s.exec(args)
 	if err = resultError(cres); err != nil {
 		C.PQclear(cres)
 		return
 	}
 	defer C.PQclear(cres)
-	rowsAffected, err := strconv.Atoi64(C.GoString(C.PQcmdTuples(cres)))
+	rowsAffected, err := strconv.ParseInt(C.GoString(C.PQcmdTuples(cres)), 10, 64)
 	if err != nil {
 		return
 	}
 	return driver.RowsAffected(rowsAffected), nil
 }
 
-func (s *driverStmt) Query(args []interface{}) (driver.Rows, os.Error) {
+func (s *driverStmt) Query(args []interface{}) (driver.Rows, error) {
 	cres := s.exec(args)
 	if err := resultError(cres); err != nil {
 		C.PQclear(cres)
@@ -208,7 +209,7 @@ func (s *driverStmt) Query(args []interface{}) (driver.Rows, os.Error) {
 	return newResult(cres), nil
 }
 
-func (s *driverStmt) Close() os.Error {
+func (s *driverStmt) Close() error {
 	if s != nil && s.res != nil {
 		C.PQclear(s.res)
 		runtime.SetFinalizer(s, nil)
@@ -242,14 +243,14 @@ func (r *driverRows) Columns() []string {
 	return r.cols
 }
 
-func argErr(i int, argType string, err string) os.Error {
-	return os.NewError(fmt.Sprintf("arg %d as %s: %s", i, argType, err))
+func argErr(i int, argType string, err string) error {
+	return errors.New(fmt.Sprintf("arg %d as %s: %s", i, argType, err))
 }
 
-func (r *driverRows) Next(dest []interface{}) os.Error {
+func (r *driverRows) Next(dest []interface{}) error {
 	r.currRow++
 	if r.currRow >= r.nrows {
-		return os.EOF
+		return io.EOF
 	}
 
 	for i := 0; i < len(dest); i++ {
@@ -271,7 +272,7 @@ func (r *driverRows) Next(dest []interface{}) os.Error {
 			}
 			buf, err := hex.DecodeString(val[2:])
 			if err != nil {
-				return argErr(i, "[]byte", err.String())
+				return argErr(i, "[]byte", err.Error())
 			}
 			dest[i] = buf
 		case CHAROID, BPCHAROID, VARCHAROID, TEXTOID,
@@ -281,13 +282,13 @@ func (r *driverRows) Next(dest []interface{}) os.Error {
 			NUMERICOID:
 			dest[i] = val
 		default:
-			return os.NewError(fmt.Sprintf("unsupported type oid: %d", vtype))
+			return errors.New(fmt.Sprintf("unsupported type oid: %d", vtype))
 		}
 	}
 	return nil
 }
 
-func (r *driverRows) Close() os.Error {
+func (r *driverRows) Close() error {
 	if r.res != nil {
 		C.PQclear(r.res)
 		r.res = nil
@@ -309,7 +310,7 @@ func buildCArgs(params []interface{}) **C.char {
 			} else {
 				str = "f"
 			}
-		case *time.Time:
+		case time.Time:
 			str = v.Format(timeFormat)
 		default:
 			str = fmt.Sprint(v)

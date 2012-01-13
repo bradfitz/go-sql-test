@@ -5,12 +5,11 @@
 package pgsqldriver
 
 import (
-	"os"
-	"math"
 	"bytes"
+	"exp/sql"
+	"math"
 	"strconv"
 	"testing"
-	"exp/sql"
 )
 
 type rec struct {
@@ -26,7 +25,7 @@ var testTuples = []rec{
 	{true, math.MaxInt32, math.MaxInt64, "Γεια σας κόσμο", []byte{0xBE, 0xEF}},
 }
 
-func chkerr(t *testing.T, err os.Error) {
+func chkerr(t *testing.T, err error) {
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -80,7 +79,7 @@ func TestPq(t *testing.T) {
 			t.Fatal("scan error:", err)
 		}
 		// Current sql converter doesn't support bool types for Scan.
-		if tf != strconv.Btoa(testTuples[i].tf) {
+		if tf != strconv.FormatBool(testTuples[i].tf) {
 			t.Fatal("bad bool")
 		}
 		if i32 != testTuples[i].i32 {
