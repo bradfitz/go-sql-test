@@ -30,7 +30,6 @@ func init() {
 }
 
 type SQLiteDriver struct {
-
 }
 
 type SQLiteConn struct {
@@ -109,9 +108,10 @@ func (c *SQLiteConn) Close() error {
 }
 
 type SQLiteStmt struct {
-	c *SQLiteConn
-	s *C.sqlite3_stmt
-	t string
+	c      *SQLiteConn
+	s      *C.sqlite3_stmt
+	t      string
+	closed bool
 }
 
 func (c *SQLiteConn) Prepare(query string) (driver.Stmt, error) {
@@ -127,10 +127,14 @@ func (c *SQLiteConn) Prepare(query string) (driver.Stmt, error) {
 	if perror != nil && C.strlen(perror) > 0 {
 		t = C.GoString(perror)
 	}
-	return &SQLiteStmt{c, s, t}, nil
+	return &SQLiteStmt{c: c, s: s, t: t}, nil
 }
 
 func (s *SQLiteStmt) Close() error {
+	if s.closed {
+		return nil
+	}
+	s.closed = true
 	rv := C.sqlite3_finalize(s.s)
 	if rv != C.SQLITE_OK {
 		return errors.New(C.GoString(C.sqlite3_errmsg(s.c.db)))
@@ -228,11 +232,7 @@ type SQLiteRows struct {
 }
 
 func (rc *SQLiteRows) Close() error {
-	rv := C.sqlite3_finalize(rc.s.s)
-	if rv != C.SQLITE_OK {
-		return errors.New(C.GoString(C.sqlite3_errmsg(rc.s.c.db)))
-	}
-	return nil
+	return rc.s.Close()
 }
 
 func (rc *SQLiteRows) Columns() []string {
