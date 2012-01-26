@@ -7,9 +7,6 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
-
-	_ "github.com/mattn/go-sqlite3"
-	_ "github.com/ziutek/mymysql/godrv"
 )
 
 type Tester interface {
