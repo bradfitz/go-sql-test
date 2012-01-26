@@ -29,7 +29,7 @@ type pqDB struct {
 
 func (p *pqDB) RunTest(t *testing.T, fn func(params)) {
 	if !p.Running() {
-		t.Logf("skipping test; no MySQL running on localhost:3306")
+		fmt.Printf("skipping test; no MySQL running on localhost:3306")
 		return
 	}
 	user := os.Getenv("GOSQLTEST_PQ_USER")
