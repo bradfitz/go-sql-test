@@ -1,7 +1,7 @@
 package sqltest
 
 import (
-	"exp/sql"
+	"database/sql"
 	"fmt"
 	"io/ioutil"
 	"os"

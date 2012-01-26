@@ -6,7 +6,7 @@ package pgsqldriver
 
 import (
 	"bytes"
-	"exp/sql"
+	"database/sql"
 	"math"
 	"strconv"
 	"testing"
