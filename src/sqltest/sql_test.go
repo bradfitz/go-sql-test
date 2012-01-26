@@ -4,8 +4,10 @@ import (
 	"database/sql"
 	"fmt"
 	"io/ioutil"
+	"net"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 )
 
@@ -13,13 +15,28 @@ type Tester interface {
 	RunTest(*testing.T, func(params))
 }
 
-type mysqlDB int
-type sqliteDB int
-
 var (
-	mysql  = mysqlDB(1)
-	sqlite = sqliteDB(1)
+	mysql  Tester = &mysqlDB{}
+	sqlite Tester = sqliteDB{}
 )
+
+type sqliteDB struct{}
+
+type mysqlDB struct {
+	once    sync.Once // guards init of running
+	running bool      // whether port 3306 is listening
+}
+
+func (m *mysqlDB) Running() bool {
+	m.once.Do(func() {
+		c, err := net.Dial("tcp", "localhost:3306")
+		if err == nil {
+			m.running = true
+			c.Close()
+		}
+	})
+	return m.running
+}
 
 type params struct {
 	dbType Tester
@@ -48,7 +65,11 @@ func (sqliteDB) RunTest(t *testing.T, fn func(params)) {
 	fn(params{sqlite, t, db})
 }
 
-func (mysqlDB) RunTest(t *testing.T, fn func(params)) {
+func (mdb *mysqlDB) RunTest(t *testing.T, fn func(params)) {
+	if !mdb.Running() {
+		t.Logf("skipping test; no MySQL running on localhost:3306")
+		return
+	}
 	user := os.Getenv("GOSQLTEST_MYSQL_USER")
 	if user == "" {
 		user = "root"
