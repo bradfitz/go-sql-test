@@ -150,3 +150,43 @@ func testManyQueryRow(t params) {
 		}
 	}
 }
+
+
+func TestTxQuery_SQLite(t *testing.T) { sqlite.RunTest(t, testTxQuery) }
+
+func testTxQuery(t params) {
+	tx, err := t.Begin()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback()
+
+	_, err = tx.Exec("create table foo (id integer primary key, name varchar(50))")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = tx.Exec("insert into foo (id, name) values(?,?)", 1, "bob")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	r, err := tx.Query("select name from foo where id = ?", 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer r.Close()
+
+	if !r.Next() {
+		if r.Err() != nil {
+			t.Fatal(err)
+		}
+		t.Fatal("expected one rows")
+	}
+
+	var name string
+	err = r.Scan(&name)
+	if err != nil {
+		t.Fatal(err)
+	}
+}
