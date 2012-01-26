@@ -18,7 +18,58 @@ type Tester interface {
 var (
 	mysql  Tester = &mysqlDB{}
 	sqlite Tester = sqliteDB{}
+	pq     Tester = &pqDB{}
 )
+
+// pqDB validates the postgres driver by Blake Mizerany (github.com/bmizerany/pq.go)
+type pqDB struct {
+	once    sync.Once // guards init of running
+	running bool      // whether port 5432 is listening
+}
+
+func (p *pqDB) RunTest(t *testing.T, fn func(params)) {
+	if !p.Running() {
+		t.Logf("skipping test; no MySQL running on localhost:3306")
+		return
+	}
+	user := os.Getenv("GOSQLTEST_PQ_USER")
+	if user == "" {
+		user = os.Getenv("USER")
+	}
+	dbName := "gosqltest"
+	db, err := sql.Open("postgres", fmt.Sprintf("postgres://%s@localhost:5432/%s", user, dbName))
+	if err != nil {
+		t.Fatalf("error connecting: %v", err)
+	}
+
+	params := params{pq, t, db}
+
+	// Drop all tables in the test database.
+	rows, err := db.Query("SHOW TABLES")
+	if err != nil {
+		t.Fatalf("failed to enumerate tables: %v", err)
+	}
+	for rows.Next() {
+		var table string
+		if rows.Scan(&table) == nil {
+			params.mustExec("DROP TABLE " + table)
+		}
+	}
+
+	fn(params)
+}
+
+func (p *pqDB) Running() bool {
+	p.once.Do(func() {
+		c, err := net.Dial("tcp", "localhost:5432")
+		if err == nil {
+			p.running = true
+			c.Close()
+		}
+	})
+	return p.running
+}
+
 
 type sqliteDB struct{}
 
@@ -110,6 +161,7 @@ func sqlBlobParam(t params, size int) string {
 
 func TestBlobs_SQLite(t *testing.T) { sqlite.RunTest(t, testBlobs) }
 func TestBlobs_MySQL(t *testing.T)  { mysql.RunTest(t, testBlobs) }
+func TestBlobs_PQ(t *testing.T)  { pq.RunTest(t, testBlobs) }
 
 func testBlobs(t params) {
 	var blob = []byte{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15}
@@ -138,6 +190,7 @@ func testBlobs(t params) {
 
 func TestManyQueryRow_SQLite(t *testing.T) { sqlite.RunTest(t, testManyQueryRow) }
 func TestManyQueryRow_MySQL(t *testing.T)  { mysql.RunTest(t, testManyQueryRow) }
+func TestManyQueryRow_PQ(t *testing.T)  { pq.RunTest(t, testManyQueryRow) }
 
 func testManyQueryRow(t params) {
 	t.mustExec("create table foo (id integer primary key, name varchar(50))")
@@ -153,6 +206,7 @@ func testManyQueryRow(t params) {
 
 
 func TestTxQuery_SQLite(t *testing.T) { sqlite.RunTest(t, testTxQuery) }
+func TestTxQuery_PQ(t *testing.T) { pq.RunTest(t, testTxQuery) }
 
 func testTxQuery(t params) {
 	tx, err := t.Begin()
