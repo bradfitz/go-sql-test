@@ -6,24 +6,27 @@ import (
 	"math"
 	"reflect"
 	"testing"
+	"time"
 )
 
 var (
 	Bytes  = []byte("Ala ma Kota!")
 	String = "ssss" //"A kot ma Alę!"
 	blob   = mysql.Blob{1, 2, 3}
-	dateT  = mysql.Datetime{Year: 2010, Month: 12, Day: 30, Hour: 17, Minute: 21}
-	tstamp = mysql.Timestamp{Year: 2001, Month: 2, Day: 3, Hour: 7, Minute: 2}
+	dateT  = time.Date(2010, 12, 30, 17, 21, 01, 0, time.Local)
+	tstamp = mysql.Timestamp{dateT.Add(1e9)}
 	date   = mysql.Date{Year: 2011, Month: 2, Day: 3}
-	tim    = -mysql.Time((5*24*3600+4*3600+3*60+2)*1e9 + 1)
+	tim    = -time.Duration((5*24*3600+4*3600+3*60+2)*1e9 + 1)
+	bol    = true
 
 	pBytes  *[]byte
 	pString *string
 	pBlob   *mysql.Blob
-	pDateT  *mysql.Datetime
+	pDateT  *time.Time
 	pTstamp *mysql.Timestamp
 	pDate   *mysql.Date
-	pTim    *mysql.Time
+	pTim    *time.Duration
+	pBol    *bool
 
 	raw = mysql.Raw{MYSQL_TYPE_INT24, &[]byte{3, 2, 1}}
 
@@ -71,6 +74,7 @@ var bindTests = []BindTest{
 	BindTest{tstamp, MYSQL_TYPE_TIMESTAMP, -1},
 	BindTest{date, MYSQL_TYPE_DATE, -1},
 	BindTest{tim, MYSQL_TYPE_TIME, -1},
+	BindTest{bol, MYSQL_TYPE_TINY, -1},
 
 	BindTest{&Bytes, MYSQL_TYPE_VAR_STRING, -1},
 	BindTest{&String, MYSQL_TYPE_STRING, -1},
@@ -87,6 +91,7 @@ var bindTests = []BindTest{
 	BindTest{pTstamp, MYSQL_TYPE_TIMESTAMP, -1},
 	BindTest{pDate, MYSQL_TYPE_DATE, -1},
 	BindTest{pTim, MYSQL_TYPE_TIME, -1},
+	BindTest{pBol, MYSQL_TYPE_TINY, -1},
 
 	BindTest{raw, MYSQL_TYPE_INT24, -1},
 
@@ -178,25 +183,25 @@ func init() {
 		WriteTest{pString, nil},
 		WriteTest{
 			blob,
-			append(
-				append([]byte{253}, EncodeU24(uint32(len(blob)))...),
-				[]byte(blob)...,
-			),
+			append(append([]byte{253}, EncodeU24(uint32(len(blob)))...),
+				[]byte(blob)...),
 		},
 		WriteTest{
 			dateT,
 			[]byte{
-				7, byte(dateT.Year), byte(dateT.Year >> 8), byte(dateT.Month),
-				byte(dateT.Day), byte(dateT.Hour), byte(dateT.Minute),
-				byte(dateT.Second),
+				7, byte(dateT.Year()), byte(dateT.Year() >> 8),
+				byte(dateT.Month()),
+				byte(dateT.Day()), byte(dateT.Hour()), byte(dateT.Minute()),
+				byte(dateT.Second()),
 			},
 		},
 		WriteTest{
 			&dateT,
 			[]byte{
-				7, byte(dateT.Year), byte(dateT.Year >> 8), byte(dateT.Month),
-				byte(dateT.Day), byte(dateT.Hour), byte(dateT.Minute),
-				byte(dateT.Second),
+				7, byte(dateT.Year()), byte(dateT.Year() >> 8),
+				byte(dateT.Month()),
+				byte(dateT.Day()), byte(dateT.Hour()), byte(dateT.Minute()),
+				byte(dateT.Second()),
 			},
 		},
 		WriteTest{
@@ -221,20 +226,24 @@ func init() {
 			&tim,
 			[]byte{12, 1, 5, 0, 0, 0, 4, 3, 2, 1, 0, 0, 0},
 		},
-		WriteTest{dateT, EncodeDatetime(&dateT)},
-		WriteTest{&dateT, EncodeDatetime(&dateT)},
+		WriteTest{bol, []byte{1}},
+		WriteTest{&bol, []byte{1}},
+		WriteTest{pBol, nil},
+
+		WriteTest{dateT, EncodeTime(dateT)},
+		WriteTest{&dateT, EncodeTime(dateT)},
 		WriteTest{pDateT, nil},
 
-		WriteTest{tstamp, EncodeDatetime((*mysql.Datetime)(&tstamp))},
-		WriteTest{&tstamp, EncodeDatetime((*mysql.Datetime)(&tstamp))},
+		WriteTest{tstamp, EncodeTime(tstamp.Time)},
+		WriteTest{&tstamp, EncodeTime(tstamp.Time)},
 		WriteTest{pTstamp, nil},
 
-		WriteTest{date, EncodeDate(&date)},
-		WriteTest{&date, EncodeDate(&date)},
+		WriteTest{date, EncodeDate(date)},
+		WriteTest{&date, EncodeDate(date)},
 		WriteTest{pDate, nil},
 
-		WriteTest{tim, EncodeTime(&tim)},
-		WriteTest{&tim, EncodeTime(&tim)},
+		WriteTest{tim, EncodeDuration(tim)},
+		WriteTest{&tim, EncodeDuration(tim)},
 		WriteTest{pTim, nil},
 
 		WriteTest{Int, EncodeU32(uint32(Int))}, // Hack

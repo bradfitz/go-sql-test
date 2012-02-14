@@ -1,162 +1,149 @@
 package mysql
 
 import (
-	"strings"
+	"errors"
+	"fmt"
 	"strconv"
+	"strings"
 	"time"
-    "fmt"
-	"reflect"
 )
 
-type Datetime struct {
-    Year  int16
-    Month, Day, Hour, Minute, Second uint8
-    Nanosec uint32
-}
-func (dt *Datetime) String() string {
-    if dt == nil {
-        return "NULL"
-    }
-    if dt.Nanosec != 0 {
-        return fmt.Sprintf(
-            "%04d-%02d-%02d %02d:%02d:%02d.%09d",
-            dt.Year, dt.Month, dt.Day, dt.Hour, dt.Minute, dt.Second,
-            dt.Nanosec,
-        )
-    }
-    return fmt.Sprintf(
-        "%04d-%02d-%02d %02d:%02d:%02d",
-        dt.Year, dt.Month, dt.Day, dt.Hour, dt.Minute, dt.Second,
-    )
-}
-
-// Convert string datetime in format YYYY-MM-DD[ HH:MM:SS] to Datetime.
-// Leading and trailing spaces are ignored. If format is invalid returns nil.
-func StrToDatetime(str string) (dt *Datetime) {
-	str = strings.TrimSpace(str)
-	if len(str) >= 10 {
-		dt = DateToDatetime(StrToDate(str[0:10]))
-	}
-	if len(str) == 10 || dt == nil {
-		return
-	}
-	tt := StrToTime(str[10:])
-	if tt == nil || *tt < 0 {
-		return nil
-	}
-	ti := *tt
-	dt.Nanosec = uint32(ti % 1e9)
-	ti /= 1e9
-	dt.Second = uint8(ti % 60)
-	ti /= 60
-	dt.Minute = uint8(ti % 60)
-	ti /= 60
-	if ti > 23 {
-		return nil
-	}
-	dt.Hour = uint8(ti)
-	return
-}
-
-// Convert *Date to *Datetime. Return nil if dd is nil
-func DateToDatetime(dd *Date) *Datetime {
-	if dd == nil {
-		return nil
-	}
-	return &Datetime{
-		Year:  dd.Year,
-		Month: dd.Month,
-		Day:   dd.Day,
-	}
-}
-
-
-// True if datetime is 0000-00-00 00:00:00
-func IsDatetimeZero(dt *Datetime) bool {
-	return dt.Day == 0 && dt.Month == 0 && dt.Year == 0 && dt.Hour == 0 &&
-		dt.Minute == 0 && dt.Second == 0 && dt.Nanosec == 0
-}
-
-
+// For MySQL DATE type
 type Date struct {
-    Year  int16
-    Month, Day uint8
-}
-func (dd *Date) String() string {
-    if dd == nil {
-        return "NULL"
-    }
-    return fmt.Sprintf("%04d-%02d-%02d", dd.Year, dd.Month, dd.Day)
+	Year       int16
+	Month, Day byte
 }
 
-// Convert string date in format YYYY-MM-DD to Date.
-// Leading and trailing spaces are ignored. If format is invalid returns nil.
-func StrToDate(str string) (dd *Date) {
-	str = strings.TrimSpace(str)
-	if len(str) != 10 || str[4] != '-' || str[7] != '-' {
-		return nil
-	}
-	dd = new(Date)
-	var (
-		ii int
-		ok error
-	)
-	if ii, ok = strconv.Atoi(str[0:4]); ok != nil {
-		return nil
-	}
-	dd.Year = int16(ii)
-	if ii, ok = strconv.Atoi(str[5:7]); ok != nil {
-		return nil
-	}
-	dd.Month = uint8(ii)
-	if ii, ok = strconv.Atoi(str[8:10]); ok != nil {
-		return nil
-	}
-	dd.Day = uint8(ii)
-	return
+func (dd Date) String() string {
+	return fmt.Sprintf("%04d-%02d-%02d", dd.Year, dd.Month, dd.Day)
 }
 
 // True if date is 0000-00-00
-func IsDateZero(dd *Date) bool {
+func (dd Date) IsZero() bool {
 	return dd.Day == 0 && dd.Month == 0 && dd.Year == 0
 }
 
-type Timestamp Datetime
-func (ts *Timestamp) String() string {
-    return (*Datetime)(ts).String()
+// Converts Date to time.Time using loc location.
+// Converts MySQL zero to time.Time zero.
+func (dd Date) Time(loc *time.Location) (t time.Time) {
+	if !dd.IsZero() {
+		t = time.Date(
+			int(dd.Year), time.Month(dd.Month), int(dd.Day),
+			0, 0, 0, 0,
+			loc,
+		)
+	}
+	return
 }
 
-// MySQL TIME in nanoseconds. Note that MySQL doesn't store fractional part
-// of second but it is permitted for temporal values.
-type Time int64
-func (tt *Time) String() string {
-    if tt == nil {
-        return "NULL"
-    }
-    ti := int64(*tt)
-    sign := 1
-    if ti < 0 {
-        sign = -1
-        ti = -ti
-    }
-    ns := int(ti % 1e9)
-    ti /= 1e9
-    sec := int(ti % 60)
-    ti /= 60
-    min := int(ti % 60)
-    hour := int(ti / 60) * sign
-    if ns == 0 {
-        return fmt.Sprintf("%d:%02d:%02d", hour, min, sec)
-    }
-    return fmt.Sprintf("%d:%02d:%02d.%09d", hour, min, sec, ns)
+// Converts Date to time.Time using Local location.
+// Converts MySQL zero to time.Time zero.
+func (dd Date) Localtime() time.Time {
+	return dd.Time(time.Local)
 }
 
-// Convert string time in format [+-]H+:MM:SS[.UUUUUUUUU] to Time.
-// Leading and trailing spaces are ignored. If format is invalid returns nil.
-func StrToTime(str string) *Time {
+// Convert string date in format YYYY-MM-DD to Date.
+// Leading and trailing spaces are ignored. If format is invalid returns zero.
+func ParseDate(str string) (dd Date, err error) {
 	str = strings.TrimSpace(str)
+	if str == "0000-00-00" {
+		return
+	}
+	var (
+		y, m, d int
+	)
+	if len(str) != 10 || str[4] != '-' || str[7] != '-' {
+		goto invalid
+	}
+	if y, err = strconv.Atoi(str[0:4]); err != nil {
+		return
+	}
+	if m, err = strconv.Atoi(str[5:7]); err != nil {
+		return
+	}
+	if m < 1 || m > 12 {
+		goto invalid
+	}
+	if d, err = strconv.Atoi(str[8:10]); err != nil {
+		return
+	}
+	if d < 1 || d > 31 {
+		goto invalid
+	}
+	dd.Year = int16(y)
+	dd.Month = byte(m)
+	dd.Day = byte(d)
+	return
+
+invalid:
+	err = errors.New("Invalid MySQL DATE string: " + str)
+	return
+}
+
+// Sandard MySQL datetime format
+const TimeFormat = "2006-01-02 15:04:05.000000000"
+
+// Returns t as string in MySQL format Converts time.Time zero to MySQL zero.
+func TimeString(t time.Time) string {
+	if t.IsZero() {
+		return "0000-00-00 00:00:00"
+	}
+	if t.Nanosecond() == 0 {
+		return t.Format(TimeFormat[:19])
+	}
+	return t.Format(TimeFormat)
+}
+
+// Parses string datetime in TimeFormat using loc location.
+// Converts MySQL zero to time.Time zero.
+func ParseTime(str string, loc *time.Location) (t time.Time, err error) {
+	str = strings.TrimSpace(str)
+	format := TimeFormat[:19]
+	switch len(str) {
+	case 10:
+		if str == "0000-00-00" {
+			return
+		}
+		format = format[:10]
+	case 19:
+		if str == "0000-00-00 00:00:00" {
+			return
+		}
+	}
+	// Don't expect 0000-00-00 00:00:00.0+
+	t, err = time.Parse(format, str)
+	if err == nil && loc != time.UTC {
+		t = convertTime(t, loc)
+	}
+	return
+}
+
+// Convert time.Duration to string representation of mysql.TIME
+func DurationString(d time.Duration) string {
+	sign := 1
+	if d < 0 {
+		sign = -1
+		d = -d
+	}
+	ns := int(d % 1e9)
+	d /= 1e9
+	sec := int(d % 60)
+	d /= 60
+	min := int(d % 60)
+	hour := int(d/60) * sign
+	if ns == 0 {
+		return fmt.Sprintf("%d:%02d:%02d", hour, min, sec)
+	}
+	return fmt.Sprintf("%d:%02d:%02d.%09d", hour, min, sec, ns)
+}
+
+// Parse duration from MySQL string format [+-]H+:MM:SS[.UUUUUUUUU].
+// Leading and trailing spaces are ignored. If format is invalid returns nil.
+func ParseDuration(str string) (dur time.Duration, err error) {
+	str = strings.TrimSpace(str)
+	orig := str
 	// Check sign
-	sign := Time(1)
+	sign := int64(1)
 	switch str[0] {
 	case '-':
 		sign = -1
@@ -164,74 +151,64 @@ func StrToTime(str string) *Time {
 	case '+':
 		str = str[1:]
 	}
-	var (
-		ii int
-		ok error
-		tt Time
-	)
+	var i, d int64
 	// Find houre
 	if nn := strings.IndexRune(str, ':'); nn != -1 {
-		if ii, ok = strconv.Atoi(str[0:nn]); ok != nil {
-			return nil
+		if i, err = strconv.ParseInt(str[0:nn], 10, 64); err != nil {
+			return
 		}
-		tt = Time(ii * 3600)
+		d = i * 3600
 		str = str[nn+1:]
 	} else {
-		return nil
+		goto invalid
 	}
 	if len(str) != 5 && len(str) != 15 || str[2] != ':' {
-		return nil
+		goto invalid
 	}
-	if ii, ok = strconv.Atoi(str[0:2]); ok != nil || ii > 59 {
-		return nil
+	if i, err = strconv.ParseInt(str[0:2], 10, 64); err != nil {
+		return
 	}
-	tt += Time(ii * 60)
-	if ii, ok = strconv.Atoi(str[3:5]); ok != nil || ii > 59 {
-		return nil
+	if i < 0 || i > 59 {
+		goto invalid
 	}
-	tt += Time(ii)
-	tt *= 1e9
+	d += i * 60
+	if i, err = strconv.ParseInt(str[3:5], 10, 64); err != nil {
+		return
+	}
+	if i < 0 || i > 59 {
+		goto invalid
+	}
+	d += i
+	d *= 1e9
 	if len(str) == 15 {
 		if str[5] != '.' {
-			return nil
+			goto invalid
 		}
-		if ii, ok = strconv.Atoi(str[6:15]); ok != nil {
-			return nil
+		if i, err = strconv.ParseInt(str[6:15], 10, 64); err != nil {
+			return
 		}
-		tt += Time(ii)
+		d += i
 	}
-	tt *= sign
-	return &tt
-}
+	dur = time.Duration(d * sign)
+	return
 
-// Convert time.Time to *Datetime. Return nil if tt is zero
-func TimeToDatetime(tt time.Time) *Datetime {
-	if tt.IsZero()  {
-		return nil
-	}
-	return &Datetime{
-		Year:   int16(tt.Year()),
-		Month:  uint8(tt.Month()),
-		Day:    uint8(tt.Day()),
-		Hour:   uint8(tt.Hour()),
-		Minute: uint8(tt.Minute()),
-		Second: uint8(tt.Second()),
-	}
-}
+invalid:
+	err = errors.New("invalid MySQL TIME string: " + orig)
+	return
 
+}
 
 type Blob []byte
 
 type Raw struct {
-    Typ uint16
-    Val *[]byte
+	Typ uint16
+	Val *[]byte
 }
 
-var (
-	BlobType = reflect.TypeOf(Blob{})
-	DatetimeType = reflect.TypeOf(Datetime{})
-	DateType = reflect.TypeOf(Date{})
-	TimestampType = reflect.TypeOf(Timestamp{})
-	TimeType = reflect.TypeOf(Time(0))
-	RawType = reflect.TypeOf(Raw{})
-)
+type Timestamp struct {
+	time.Time
+}
+
+func (t Timestamp) String() string {
+	return TimeString(t.Time)
+}

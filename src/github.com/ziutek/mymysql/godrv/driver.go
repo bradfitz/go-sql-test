@@ -2,9 +2,9 @@
 package godrv
 
 import (
-	"errors"
 	"database/sql"
 	"database/sql/driver"
+	"errors"
 	"fmt"
 	"github.com/ziutek/mymysql/mysql"
 	"github.com/ziutek/mymysql/native"
@@ -12,6 +12,7 @@ import (
 	"math"
 	"reflect"
 	"strings"
+	"time"
 )
 
 type conn struct {
@@ -112,6 +113,7 @@ func (r rowsRes) Close() error {
 	return nil
 }
 
+// DATE, DATETIME, TIMESTAMP are treated as they are in Local time zone
 func (r rowsRes) Next(dest []interface{}) error {
 	row, err := r.my.GetRow()
 	if err != nil {
@@ -125,18 +127,23 @@ func (r rowsRes) Next(dest []interface{}) error {
 			dest[i] = nil
 			continue
 		}
-		v := reflect.ValueOf(col)
-		switch v.Type() {
-		case mysql.DatetimeType, mysql.DateType:
-			dest[i] = []byte(v.Interface().(fmt.Stringer).String())
+		switch c := col.(type) {
+		case time.Time:
+			dest[i] = c
+			continue
+		case mysql.Timestamp:
+			dest[i] = c.Time
+			continue
+		case mysql.Date:
+			dest[i] = c.Localtime()
 			continue
 		}
+		v := reflect.ValueOf(col)
 		switch v.Kind() {
-		case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32,
-			reflect.Int64: // This contains mysql.Time to
+		case reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+			// this contains time.Duration to
 			dest[i] = v.Int()
-		case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32,
-			reflect.Uint64:
+		case reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
 			u := v.Uint()
 			if u > math.MaxInt64 {
 				panic("Value to large for int64 type")
@@ -144,8 +151,6 @@ func (r rowsRes) Next(dest []interface{}) error {
 			dest[i] = int64(u)
 		case reflect.Float32, reflect.Float64:
 			dest[i] = v.Float()
-		case reflect.Bool:
-			dest[i] = v.Bool()
 		case reflect.Slice:
 			if v.Type().Elem().Kind() == reflect.Uint8 {
 				dest[i] = v.Interface().([]byte)
@@ -159,16 +164,21 @@ func (r rowsRes) Next(dest []interface{}) error {
 	return nil
 }
 
-type drv struct {
+type Driver struct {
 	// Defaults
 	proto, laddr, raddr, user, passwd, db string
 }
 
-// Establish a connection using URI of following syntax:
+// Open new connection. The uri need to have the following syntax:
+//
+//   [PROTOCOL_SPECFIIC*]DBNAME/USER/PASSWD
+//
+// where protocol spercific part may be empty (this means connection to
+// local server using default protocol). Currently possible forms:
 //   DBNAME/USER/PASSWD
 //   unix:SOCKPATH*DBNAME/USER/PASSWD
 //   tcp:ADDR*DBNAME/USER/PASSWD
-func (d *drv) Open(uri string) (driver.Conn, error) {
+func (d *Driver) Open(uri string) (driver.Conn, error) {
 	pd := strings.SplitN(uri, "*", 2)
 	if len(pd) == 2 {
 		// Parse protocol part of URI
@@ -199,5 +209,5 @@ func (d *drv) Open(uri string) (driver.Conn, error) {
 }
 
 func init() {
-	sql.Register("mymysql", &drv{proto: "tcp", raddr: "127.0.0.1:3306"})
+	sql.Register("mymysql", &Driver{proto: "tcp", raddr: "127.0.0.1:3306"})
 }

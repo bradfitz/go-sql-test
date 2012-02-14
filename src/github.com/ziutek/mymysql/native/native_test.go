@@ -80,7 +80,9 @@ func checkErrWarnRows(t *testing.T, res, exp *RowsResErr) {
 	if !reflect.DeepEqual(res.rows, exp.rows) {
 		rlen := len(res.rows)
 		elen := len(exp.rows)
-		t.Errorf("Rows are different:\nLen: res=%d  exp=%d", rlen, elen)
+		t.Error("Rows are different!")
+		t.Errorf("len/cap: res=%d/%d exp=%d/%d",
+			rlen, cap(res.rows), elen, cap(exp.rows))
 		max := rlen
 		if elen > max {
 			max = elen
@@ -101,6 +103,12 @@ func checkErrWarnRows(t *testing.T, res, exp *RowsResErr) {
 			}
 			if ii < len(exp.rows) {
 				t.Error(" exp: ", exp.rows[ii])
+			}
+			if ii < len(res.rows) {
+				t.Errorf(" res: %#v", res.rows[ii][2])
+			}
+			if ii < len(exp.rows) {
+				t.Errorf(" exp: %#v", exp.rows[ii][2])
 			}
 		}
 		t.FailNow()
@@ -301,24 +309,28 @@ func TestPrepared(t *testing.T) {
 	ins := prepare("insert into P values (?, ?, ?)")
 	checkErr(t, ins.err, nil)
 
+	parsed, err := mysql.ParseTime("2012-01-17 01:10:10", time.Local)
+	checkErr(t, err, nil)
+	parsedZero, err := mysql.ParseTime("0000-00-00 00:00:00", time.Local)
+	checkErr(t, err, nil)
+	if !parsedZero.IsZero() {
+		t.Fatalf("time '%s' isn't zero", parsedZero)
+	}
 	exp_rows := []mysql.Row{
 		mysql.Row{
-			2, "Taki tekst", mysql.TimeToDatetime(time.Unix(123456789, 0)),
+			2, "Taki tekst", time.Unix(123456789, 0),
 		},
 		mysql.Row{
-			3, "Łódź się kołysze!", mysql.TimeToDatetime(time.Unix(0, 0)),
+			5, "Pąk róży", parsed,
 		},
 		mysql.Row{
-			5, "Pąk róży", mysql.TimeToDatetime(time.Unix(9999999999, 0)),
+			11, "Zero UTC datetime", time.Unix(0, 0),
 		},
 		mysql.Row{
-			11, "Zero UTC datetime", mysql.TimeToDatetime(time.Unix(0, 0).UTC()),
+			17, mysql.Blob([]byte("Zero datetime")), parsedZero,
 		},
 		mysql.Row{
-			17, mysql.Blob([]byte("Zero datetime")), new(mysql.Datetime),
-		},
-		mysql.Row{
-			23, []byte("NULL datetime"), (*mysql.Datetime)(nil),
+			23, []byte("NULL datetime"), (*time.Time)(nil),
 		},
 		mysql.Row{
 			23, "NULL", nil,
@@ -382,8 +394,8 @@ func TestPrepared(t *testing.T) {
 // Bind testing
 
 func TestVarBinding(t *testing.T) {
-	myConnect(t, true, 34*1024*1024)
-	query("drop table P") // Drop test table if exists
+	myConnect(t, true, 0)
+	query("drop table T") // Drop test table if exists
 	checkResult(t,
 		query("create table T (id int primary key, str varchar(20))"),
 		cmdOK(0, false, true),
@@ -399,7 +411,7 @@ func TestVarBinding(t *testing.T) {
 		ii  int
 		ss  string
 	)
-	ins.BindParams(&id, &str)
+	ins.Bind(&id, &str)
 
 	i1 := 1
 	s1 := "Ala"
@@ -416,7 +428,7 @@ func TestVarBinding(t *testing.T) {
 	rre.res, rre.err = ins.Run()
 	checkResult(t, &rre, cmdOK(1, true, false))
 
-	ins.BindParams(&ii, &ss)
+	ins.Bind(&ii, &ss)
 	ii = 3
 	ss = "A kot ma Ale!"
 
@@ -448,6 +460,47 @@ func TestVarBinding(t *testing.T) {
 	myClose(t)
 }
 
+func TestBindStruct(t *testing.T) {
+	myConnect(t, true, 0)
+	query("drop table T") // Drop test table if exists
+	checkResult(t,
+		query("create table T (id int primary key, txt varchar(20), b bool)"),
+		cmdOK(0, false, true),
+	)
+
+	ins, err := my.Prepare("insert T values (?, ?, ?)")
+	checkErr(t, err, nil)
+	sel, err := my.Prepare("select txt, b from T where id = ?")
+	checkErr(t, err, nil)
+
+	var (
+		s struct {
+			Id  int
+			Txt string
+			B   bool
+		}
+		rre RowsResErr
+	)
+
+	ins.Bind(&s)
+
+	s.Id = 2
+	s.Txt = "Ala ma kota."
+	s.B = true
+
+	rre.res, rre.err = ins.Run()
+	checkResult(t, &rre, cmdOK(1, true, false))
+
+	rows, _, err := sel.Exec(s.Id)
+	checkErr(t, err, nil)
+	if len(rows) != 1 || rows[0].Str(0) != s.Txt || rows[0].Bool(1) != s.B {
+		t.Fatal("selected data don't match inserted data")
+	}
+
+	checkResult(t, query("drop table T"), cmdOK(0, false, true))
+	myClose(t)
+}
+
 func TestDate(t *testing.T) {
 	myConnect(t, true, 0)
 	query("drop table D") // Drop test table if exists
@@ -456,32 +509,50 @@ func TestDate(t *testing.T) {
 		cmdOK(0, false, true),
 	)
 
-	dd := "2011-12-13"
-	dt := "2010-12-12 11:24:00"
-	tt := -mysql.Time((124*3600+4*3600+3*60+2)*1e9 + 1)
+	test := []struct {
+		dd, dt string
+		tt     time.Duration
+	}{
+		{
+			"2011-11-13",
+			"2010-12-12 11:24:00",
+			-time.Duration((128*3600 + 3*60 + 2) * 1e9),
+		}, {
+			"0000-00-00",
+			"0000-00-00 00:00:00",
+			time.Duration(0),
+		},
+	}
 
 	ins, err := my.Prepare("insert D values (?, ?, ?, ?)")
 	checkErr(t, err, nil)
 
-	sel, err := my.Prepare("select id, tt from D where dd <= ? && dt <= ?")
+	sel, err := my.Prepare("select id, tt from D where dd = ? && dt = ?")
 	checkErr(t, err, nil)
 
-	_, err = ins.Run(1, dd, dt, tt)
-	checkErr(t, err, nil)
+	for i, r := range test {
+		_, err = ins.Run(i, r.dd, r.dt, r.tt)
+		checkErr(t, err, nil)
 
-	rows, _, err := sel.Exec(mysql.StrToDatetime(dd), mysql.StrToDate(dd))
-	checkErr(t, err, nil)
-	if rows == nil {
-		t.Fatal("nil result")
-	}
-	if rows[0].Int(0) != 1 {
-		t.Fatal("Bad id", rows[0].Int(1))
-	}
-	if rows[0][1].(mysql.Time) != tt+1 {
-		t.Fatal("Bad tt", rows[0][1].(mysql.Time))
+		sdt, err := mysql.ParseTime(r.dt, time.Local)
+		checkErr(t, err, nil)
+		sdd, err := mysql.ParseDate(r.dd)
+		checkErr(t, err, nil)
+
+		rows, _, err := sel.Exec(sdd, sdt)
+		checkErr(t, err, nil)
+		if rows == nil {
+			t.Fatal("nil result")
+		}
+		if rows[0].Int(0) != i {
+			t.Fatal("Bad id", rows[0].Int(1))
+		}
+		if rows[0][1].(time.Duration) != r.tt {
+			t.Fatal("Bad tt", rows[0].Duration(1))
+		}
 	}
 
-	checkResult(t, query("drop table D"), cmdOK(0, false, true))
+	//checkResult(t, query("drop table D"), cmdOK(0, false, true))
 	myClose(t)
 }
 
@@ -516,7 +587,7 @@ func TestBigBlob(t *testing.T) {
 	}{}
 
 	// Individual parameters binding
-	ins.BindParams(&id, &bb)
+	ins.Bind(&id, &bb)
 	id = 1
 	bb = big_blob
 
@@ -525,7 +596,7 @@ func TestBigBlob(t *testing.T) {
 	checkResult(t, &rre, cmdOK(1, true, false))
 
 	// Struct binding
-	ins.BindParams(&data)
+	ins.Bind(&data)
 	data.Id = 2
 	data.Bb = big_blob[0 : 32*1024*1024-31]
 
@@ -533,7 +604,7 @@ func TestBigBlob(t *testing.T) {
 	rre.res, rre.err = ins.Run()
 	checkResult(t, &rre, cmdOK(1, true, false))
 
-	sel.BindParams(&id)
+	sel.Bind(&id)
 
 	// Check first insert.
 	tmr := "Too many rows"
@@ -633,8 +704,8 @@ func TestReconnect(t *testing.T) {
 	}{}
 	var sel_id int
 
-	ins.BindParams(&params)
-	sel.BindParams(&sel_id)
+	ins.Bind(&params)
+	sel.Bind(&sel_id)
 
 	checkErr(t, my.Reconnect(), nil)
 
@@ -685,8 +756,8 @@ func TestSendLongData(t *testing.T) {
 		id  int64
 	)
 
-	ins.BindParams(&id, []byte(nil))
-	sel.BindParams(&id)
+	ins.Bind(&id, []byte(nil))
+	sel.Bind(&id)
 
 	// Prepare data
 	data := make([]byte, 4*1024*1024)
@@ -701,7 +772,6 @@ func TestSendLongData(t *testing.T) {
 	rre.res, rre.err = ins.Run()
 	checkResult(t, &rre, cmdOK(1, true, false))
 
-	return
 	res, err := sel.Run()
 	checkErr(t, err, nil)
 
@@ -715,9 +785,20 @@ func TestSendLongData(t *testing.T) {
 		t.Fatal("Bad result")
 	}
 
+	file, err := ioutil.TempFile("", "mymysql_test-")
+	checkErr(t, err, nil)
+	filename := file.Name()
+	defer os.Remove(filename)
+
+	buf := make([]byte, 1024)
+	for i := 0; i < 2048; i++ {
+		_, err := file.Write(buf)
+		checkErr(t, err, nil)
+	}
+	checkErr(t, file.Close(), nil)
+
 	// Send long data from io.Reader twice
-	filename := "_test/github.com/ziutek/mymysql/native.a"
-	file, err := os.Open(filename)
+	file, err = os.Open(filename)
 	checkErr(t, err, nil)
 	checkErr(t, ins.SendLongData(1, file, 128*1024), nil)
 	checkErr(t, file.Close(), nil)
@@ -749,6 +830,78 @@ func TestSendLongData(t *testing.T) {
 
 	checkResult(t, query("drop table L"), cmdOK(0, false, true))
 	myClose(t)
+}
+
+func TestNull(t *testing.T) {
+	myConnect(t, true, 0)
+	query("drop table if exists N")
+	checkResult(t,
+		query("create table N (i int not null, n int)"),
+		cmdOK(0, false, true),
+	)
+	ins, err := my.Prepare("insert N values (?, ?)")
+	checkErr(t, err, nil)
+
+	var (
+		p   struct{ I, N *int }
+		rre RowsResErr
+	)
+	ins.Bind(&p)
+
+	p.I = new(int)
+	p.N = new(int)
+
+	*p.I = 0
+	*p.N = 1
+	rre.res, rre.err = ins.Run()
+	checkResult(t, &rre, cmdOK(1, true, false))
+	*p.I = 1
+	p.N = nil
+	rre.res, rre.err = ins.Run()
+	checkResult(t, &rre, cmdOK(1, true, false))
+
+	checkResult(t, query("insert N values (2, 1)"), cmdOK(1, false, true))
+	checkResult(t, query("insert N values (3, NULL)"), cmdOK(1, false, true))
+
+	rows, res, err := my.Query("select * from N")
+	checkErr(t, err, nil)
+	if len(rows) != 4 {
+		t.Fatal("str: len(rows) != 4")
+	}
+	i := res.Map("i")
+	n := res.Map("n")
+	for k, row := range rows {
+		switch {
+		case row[i] == nil || row.Int(i) != k:
+		case k%2 == 1 && row[n] != nil:
+		case k%2 == 0 && (row[n] == nil || row.Int(n) != 1):
+		default:
+			continue
+		}
+		t.Fatalf("str row: %d = (%s, %s)", k, row[i], row[n])
+	}
+
+	sel, err := my.Prepare("select * from N")
+	checkErr(t, err, nil)
+	rows, res, err = sel.Exec()
+	checkErr(t, err, nil)
+	if len(rows) != 4 {
+		t.Fatal("bin: len(rows) != 4")
+	}
+	i = res.Map("i")
+	n = res.Map("n")
+	for k, row := range rows {
+		switch {
+		case row[i] == nil || row.Int(i) != k:
+		case k%2 == 1 && row[n] != nil:
+		case k%2 == 0 && (row[n] == nil || row.Int(n) != 1):
+		default:
+			continue
+		}
+		t.Fatalf("bin row: %d = (%v, %v)", k, row[i], row[n])
+	}
+
+	checkResult(t, query("drop table N"), cmdOK(0, false, true))
 }
 
 func TestMultipleResults(t *testing.T) {
