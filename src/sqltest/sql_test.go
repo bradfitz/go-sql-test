@@ -7,6 +7,8 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"regexp"
+	"strconv"
 	"sync"
 	"testing"
 )
@@ -102,6 +104,20 @@ func (t params) mustExec(sql string, args ...interface{}) sql.Result {
 	return res
 }
 
+var qrx = regexp.MustCompile(`\?`)
+
+// q converts "?" characters to $1, $2, $n on postgres.
+func (t params) q(sql string) string {
+	if t.dbType != pq {
+		return sql
+	}
+	n := 0
+	return qrx.ReplaceAllStringFunc(sql, func(string) string {
+		n++
+		return "$" + strconv.Itoa(n)
+	})
+}
+
 func (sqliteDB) RunTest(t *testing.T, fn func(params)) {
 	tempDir, err := ioutil.TempDir("", "")
 	if err != nil {
@@ -155,6 +171,9 @@ func sqlBlobParam(t params, size int) string {
 	if t.dbType == sqlite {
 		return fmt.Sprintf("blob[%d]", size)
 	}
+	if t.dbType == pq {
+		return "bytea"
+	}
 	return fmt.Sprintf("VARBINARY(%d)", size)
 }
 
@@ -165,12 +184,12 @@ func TestBlobs_PQ(t *testing.T)     { pq.RunTest(t, testBlobs) }
 func testBlobs(t params) {
 	var blob = []byte{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15}
 	t.mustExec("create table foo (id integer primary key, bar " + sqlBlobParam(t, 16) + ")")
-	t.mustExec("replace into foo (id, bar) values(?,?)", 0, blob)
+	t.mustExec(t.q("insert into foo (id, bar) values(?,?)"), 0, blob)
 
 	want := fmt.Sprintf("%x", blob)
 
 	b := make([]byte, 16)
-	err := t.QueryRow("select bar from foo where id = ?", 0).Scan(&b)
+	err := t.QueryRow(t.q("select bar from foo where id = ?"), 0).Scan(&b)
 	got := fmt.Sprintf("%x", b)
 	if err != nil {
 		t.Errorf("[]byte scan: %v", err)
@@ -178,7 +197,7 @@ func testBlobs(t params) {
 		t.Errorf("for []byte, got %q; want %q", got, want)
 	}
 
-	err = t.QueryRow("select bar from foo where id = ?", 0).Scan(&got)
+	err = t.QueryRow(t.q("select bar from foo where id = ?"), 0).Scan(&got)
 	want = string(blob)
 	if err != nil {
 		t.Errorf("string scan: %v", err)
@@ -197,10 +216,10 @@ func testManyQueryRow(t params) {
 		return
 	}
 	t.mustExec("create table foo (id integer primary key, name varchar(50))")
-	t.mustExec("insert into foo (id, name) values(?,?)", 1, "bob")
+	t.mustExec(t.q("insert into foo (id, name) values(?,?)"), 1, "bob")
 	var name string
 	for i := 0; i < 10000; i++ {
-		err := t.QueryRow("select name from foo where id = ?", 1).Scan(&name)
+		err := t.QueryRow(t.q("select name from foo where id = ?"), 1).Scan(&name)
 		if err != nil || name != "bob" {
 			t.Fatalf("on query %d: err=%v, name=%q", i, err, name)
 		}
@@ -222,12 +241,12 @@ func testTxQuery(t params) {
 		t.Fatal(err)
 	}
 
-	_, err = tx.Exec("insert into foo (id, name) values(?,?)", 1, "bob")
+	_, err = tx.Exec(t.q("insert into foo (id, name) values(?,?)"), 1, "bob")
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	r, err := tx.Query("select name from foo where id = ?", 1)
+	r, err := tx.Query(t.q("select name from foo where id = ?"), 1)
 	if err != nil {
 		t.Fatal(err)
 	}
