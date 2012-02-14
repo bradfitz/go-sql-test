@@ -1,0 +1,38 @@
+This project is an integration test, testing various Go database
+drivers (for the database/sql package).
+
+To run these tests, in this directory, run:
+
+$ export GOPATH=$PWD
+
+... ignoring your existing GOPATH.  (This project imports all the 3rd
+party drivers here, to make things easier to track, and to enable
+local fixes while waiting for upstream.)
+
+Then:
+
+$ cd src/sqltest
+$ gotest -v
+
+or, most of the time, skipping the annoyingly long tests:
+
+$ gotest -v -short
+
+
+****************************************************************************
+For MySQL:
+****************************************************************************
+mysqladmin -uroot -proot create gosqltest
+
+
+****************************************************************************
+For Postgres: (replacing "bradfitz" with $USER)
+****************************************************************************
+root@bradfitzlap:/home/bradfitz# su - postgres
+postgres@bradfitzlap:~$ psql
+postgres=# create database gosqltest;
+CREATE DATABASE
+postgres=# CREATE USER bradfitz WITH ENCRYPTED PASSWORD 'gosqltest';
+CREATE ROLE
+postgres=# GRANT ALL PRIVILEGES ON DATABASE gosqltest to bradfitz;
+GRANT
