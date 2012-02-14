@@ -29,7 +29,7 @@ type pqDB struct {
 
 func (p *pqDB) RunTest(t *testing.T, fn func(params)) {
 	if !p.Running() {
-		fmt.Printf("skipping test; no MySQL running on localhost:3306")
+		fmt.Printf("skipping test; no Postgres running on localhost:5432")
 		return
 	}
 	user := os.Getenv("GOSQLTEST_PQ_USER")
@@ -37,7 +37,7 @@ func (p *pqDB) RunTest(t *testing.T, fn func(params)) {
 		user = os.Getenv("USER")
 	}
 	dbName := "gosqltest"
-	db, err := sql.Open("postgres", fmt.Sprintf("postgres://%s@localhost:5432/%s", user, dbName))
+	db, err := sql.Open("postgres", fmt.Sprintf("postgres://%s:gosqltest@localhost:5432/%s", user, dbName))
 	if err != nil {
 		t.Fatalf("error connecting: %v", err)
 	}
@@ -45,7 +45,7 @@ func (p *pqDB) RunTest(t *testing.T, fn func(params)) {
 	params := params{pq, t, db}
 
 	// Drop all tables in the test database.
-	rows, err := db.Query("SHOW TABLES")
+	rows, err := db.Query("SELECT table_name FROM information_schema.tables WHERE table_schema = 'public'")
 	if err != nil {
 		t.Fatalf("failed to enumerate tables: %v", err)
 	}
@@ -69,7 +69,6 @@ func (p *pqDB) Running() bool {
 	})
 	return p.running
 }
-
 
 type sqliteDB struct{}
 
@@ -161,7 +160,7 @@ func sqlBlobParam(t params, size int) string {
 
 func TestBlobs_SQLite(t *testing.T) { sqlite.RunTest(t, testBlobs) }
 func TestBlobs_MySQL(t *testing.T)  { mysql.RunTest(t, testBlobs) }
-func TestBlobs_PQ(t *testing.T)  { pq.RunTest(t, testBlobs) }
+func TestBlobs_PQ(t *testing.T)     { pq.RunTest(t, testBlobs) }
 
 func testBlobs(t params) {
 	var blob = []byte{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15}
@@ -190,9 +189,13 @@ func testBlobs(t params) {
 
 func TestManyQueryRow_SQLite(t *testing.T) { sqlite.RunTest(t, testManyQueryRow) }
 func TestManyQueryRow_MySQL(t *testing.T)  { mysql.RunTest(t, testManyQueryRow) }
-func TestManyQueryRow_PQ(t *testing.T)  { pq.RunTest(t, testManyQueryRow) }
+func TestManyQueryRow_PQ(t *testing.T)     { pq.RunTest(t, testManyQueryRow) }
 
 func testManyQueryRow(t params) {
+	if testing.Short() {
+		t.Logf("skipping in short mode")
+		return
+	}
 	t.mustExec("create table foo (id integer primary key, name varchar(50))")
 	t.mustExec("insert into foo (id, name) values(?,?)", 1, "bob")
 	var name string
@@ -204,9 +207,8 @@ func testManyQueryRow(t params) {
 	}
 }
 
-
 func TestTxQuery_SQLite(t *testing.T) { sqlite.RunTest(t, testTxQuery) }
-func TestTxQuery_PQ(t *testing.T) { pq.RunTest(t, testTxQuery) }
+func TestTxQuery_PQ(t *testing.T)     { pq.RunTest(t, testTxQuery) }
 
 func testTxQuery(t params) {
 	tx, err := t.Begin()
