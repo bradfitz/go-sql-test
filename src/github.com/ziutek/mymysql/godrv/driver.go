@@ -67,7 +67,11 @@ func (s stmt) NumInput() int {
 	return s.my.NumParam()
 }
 
-func (s stmt) run(args []interface{}) (rowsRes, error) {
+func (s stmt) run(vargs []driver.Value) (rowsRes, error) {
+	args := make([]interface{}, len(vargs))
+	for i, a := range vargs {
+		args[i] = a
+	}
 	res, err := s.my.Run(args...)
 	if err != nil {
 		return rowsRes{nil}, err
@@ -75,11 +79,11 @@ func (s stmt) run(args []interface{}) (rowsRes, error) {
 	return rowsRes{res}, nil
 }
 
-func (s stmt) Exec(args []interface{}) (driver.Result, error) {
+func (s stmt) Exec(args []driver.Value) (driver.Result, error) {
 	return s.run(args)
 }
 
-func (s stmt) Query(args []interface{}) (driver.Rows, error) {
+func (s stmt) Query(args []driver.Value) (driver.Rows, error) {
 	return s.run(args)
 }
 
@@ -114,7 +118,7 @@ func (r rowsRes) Close() error {
 }
 
 // DATE, DATETIME, TIMESTAMP are treated as they are in Local time zone
-func (r rowsRes) Next(dest []interface{}) error {
+func (r rowsRes) Next(dest []driver.Value) error {
 	row, err := r.my.GetRow()
 	if err != nil {
 		return err

@@ -140,8 +140,8 @@ func (mdb *mysqlDB) RunTest(t *testing.T, fn func(params)) {
 	if user == "" {
 		user = "root"
 	}
-	pass, err := os.Getenverror("GOSQLTEST_MYSQL_PASS")
-	if err != nil {
+	pass, ok := getenvOk("GOSQLTEST_MYSQL_PASS")
+	if !ok {
 		pass = "root"
 	}
 	dbName := "gosqltest"
@@ -264,4 +264,18 @@ func testTxQuery(t params) {
 	if err != nil {
 		t.Fatal(err)
 	}
+}
+
+func getenvOk(k string) (v string, ok bool) {
+        v = os.Getenv(k)
+        if v != "" {
+                return v, true
+        }
+        keq := k + "="
+        for _, kv := range os.Environ() {
+                if kv == keq {
+                        return "", true
+                }
+        }
+        return "", false
 }
