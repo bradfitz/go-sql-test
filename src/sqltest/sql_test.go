@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"fmt"
 	"io/ioutil"
+	"math/rand"
 	"net"
 	"os"
 	"path/filepath"
@@ -266,6 +267,53 @@ func testTxQuery(t params) {
 		t.Fatal(err)
 	}
 }
+
+func TestPreparedStmt_SQLite(t *testing.T) { sqlite.RunTest(t, testPreparedStmt) }
+func TestPreparedStmt_MySQL(t *testing.T)  { mysql.RunTest(t, testPreparedStmt) }
+func TestPreparedStmt_PQ(t *testing.T)     { pq.RunTest(t, testPreparedStmt) }
+
+func testPreparedStmt(t params) {
+	t.mustExec("CREATE TABLE t (count INT)")
+	sel, err := t.Prepare("SELECT count FROM t ORDER BY count DESC")
+	if err != nil {
+		t.Fatalf("prepare 1: %v", err)
+	}
+	ins, err := t.Prepare(t.q("INSERT INTO t (count) VALUES (?)"))
+	if err != nil {
+		t.Fatalf("prepare 2: %v", err)
+	}
+
+	for n := 1; n <= 3; n++ {
+		if _, err := ins.Exec(n); err != nil {
+			t.Fatalf("insert(%d) = %v", n, err)
+		}
+	}
+
+	const nRuns = 10
+	ch := make(chan bool)
+	for i := 0; i < nRuns; i++ {
+		go func() {
+			defer func() {
+				ch <- true
+			}()
+			for j := 0; j < 10; j++ {
+				count := 0
+				if err := sel.QueryRow().Scan(&count); err != nil && err != sql.ErrNoRows {
+					t.Errorf("Query: %v", err)
+					return
+				}
+				if _, err := ins.Exec(rand.Intn(100)); err != nil {
+					t.Errorf("Insert: %v", err)
+					return
+				}
+			}
+		}()
+	}
+	for i := 0; i < nRuns; i++ {
+		<-ch
+	}
+}
+
 
 func getenvOk(k string) (v string, ok bool) {
         v = os.Getenv(k)
