@@ -227,6 +227,7 @@ func testManyQueryRow(t params) {
 }
 
 func TestTxQuery_SQLite(t *testing.T) { sqlite.RunTest(t, testTxQuery) }
+func TestTxQuery_MySQL(t *testing.T)  { mysql.RunTest(t, testTxQuery) }
 func TestTxQuery_PQ(t *testing.T)     { pq.RunTest(t, testTxQuery) }
 
 func testTxQuery(t params) {
