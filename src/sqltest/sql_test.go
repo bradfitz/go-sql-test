@@ -32,7 +32,7 @@ type pqDB struct {
 
 func (p *pqDB) RunTest(t *testing.T, fn func(params)) {
 	if !p.Running() {
-		fmt.Printf("skipping test; no Postgres running on localhost:5432")
+		fmt.Printf("skipping test; no Postgres running on localhost:5432\n")
 		return
 	}
 	user := os.Getenv("GOSQLTEST_PQ_USER")
