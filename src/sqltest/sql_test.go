@@ -40,7 +40,7 @@ func (p *pqDB) RunTest(t *testing.T, fn func(params)) {
 		user = os.Getenv("USER")
 	}
 	dbName := "gosqltest"
-	db, err := sql.Open("postgres", fmt.Sprintf("postgres://%s:gosqltest@localhost:5432/%s", user, dbName))
+	db, err := sql.Open("postgres", fmt.Sprintf("user=%s password=foo dbname=%s sslmode=disable", user, dbName))
 	if err != nil {
 		t.Fatalf("error connecting: %v", err)
 	}
