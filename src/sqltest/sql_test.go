@@ -19,9 +19,10 @@ type Tester interface {
 }
 
 var (
-	mysql  Tester = &mysqlDB{}
-	sqlite Tester = sqliteDB{}
-	pq     Tester = &pqDB{}
+	myMysql Tester = &myMysqlDB{}
+	goMysql Tester = &goMysqlDB{}
+	sqlite  Tester = sqliteDB{}
+	pq      Tester = &pqDB{}
 )
 
 // pqDB validates the postgres driver by Blake Mizerany (github.com/bmizerany/pq.go)
@@ -75,12 +76,28 @@ func (p *pqDB) Running() bool {
 
 type sqliteDB struct{}
 
-type mysqlDB struct {
+type myMysqlDB struct {
 	once    sync.Once // guards init of running
 	running bool      // whether port 3306 is listening
 }
 
-func (m *mysqlDB) Running() bool {
+func (m *myMysqlDB) Running() bool {
+	m.once.Do(func() {
+		c, err := net.Dial("tcp", "localhost:3306")
+		if err == nil {
+			m.running = true
+			c.Close()
+		}
+	})
+	return m.running
+}
+
+type goMysqlDB struct {
+	once    sync.Once // guards init of running
+	running bool      // whether port 3306 is listening
+}
+
+func (m *goMysqlDB) Running() bool {
 	m.once.Do(func() {
 		c, err := net.Dial("tcp", "localhost:3306")
 		if err == nil {
@@ -132,8 +149,8 @@ func (sqliteDB) RunTest(t *testing.T, fn func(params)) {
 	fn(params{sqlite, t, db})
 }
 
-func (mdb *mysqlDB) RunTest(t *testing.T, fn func(params)) {
-	if !mdb.Running() {
+func (m *myMysqlDB) RunTest(t *testing.T, fn func(params)) {
+	if !m.Running() {
 		t.Logf("skipping test; no MySQL running on localhost:3306")
 		return
 	}
@@ -151,7 +168,43 @@ func (mdb *mysqlDB) RunTest(t *testing.T, fn func(params)) {
 		t.Fatalf("error connecting: %v", err)
 	}
 
-	params := params{mysql, t, db}
+	params := params{myMysql, t, db}
+
+	// Drop all tables in the test database.
+	rows, err := db.Query("SHOW TABLES")
+	if err != nil {
+		t.Fatalf("failed to enumerate tables: %v", err)
+	}
+	for rows.Next() {
+		var table string
+		if rows.Scan(&table) == nil {
+			params.mustExec("DROP TABLE " + table)
+		}
+	}
+
+	fn(params)
+}
+
+func (m *goMysqlDB) RunTest(t *testing.T, fn func(params)) {
+	if !m.Running() {
+		t.Logf("skipping test; no MySQL running on localhost:3306")
+		return
+	}
+	user := os.Getenv("GOSQLTEST_MYSQL_USER")
+	if user == "" {
+		user = "root"
+	}
+	pass, ok := getenvOk("GOSQLTEST_MYSQL_PASS")
+	if !ok {
+		pass = "root"
+	}
+	dbName := "gosqltest"
+	db, err := sql.Open("mysql", fmt.Sprintf("%s:%s@/%s", user, pass, dbName))
+	if err != nil {
+		t.Fatalf("error connecting: %v", err)
+	}
+
+	params := params{goMysql, t, db}
 
 	// Drop all tables in the test database.
 	rows, err := db.Query("SHOW TABLES")
@@ -178,9 +231,10 @@ func sqlBlobParam(t params, size int) string {
 	return fmt.Sprintf("VARBINARY(%d)", size)
 }
 
-func TestBlobs_SQLite(t *testing.T) { sqlite.RunTest(t, testBlobs) }
-func TestBlobs_MySQL(t *testing.T)  { mysql.RunTest(t, testBlobs) }
-func TestBlobs_PQ(t *testing.T)     { pq.RunTest(t, testBlobs) }
+func TestBlobs_SQLite(t *testing.T)  { sqlite.RunTest(t, testBlobs) }
+func TestBlobs_MyMySQL(t *testing.T) { myMysql.RunTest(t, testBlobs) }
+func TestBlobs_GoMySQL(t *testing.T) { goMysql.RunTest(t, testBlobs) }
+func TestBlobs_PQ(t *testing.T)      { pq.RunTest(t, testBlobs) }
 
 func testBlobs(t params) {
 	var blob = []byte{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15}
@@ -207,9 +261,10 @@ func testBlobs(t params) {
 	}
 }
 
-func TestManyQueryRow_SQLite(t *testing.T) { sqlite.RunTest(t, testManyQueryRow) }
-func TestManyQueryRow_MySQL(t *testing.T)  { mysql.RunTest(t, testManyQueryRow) }
-func TestManyQueryRow_PQ(t *testing.T)     { pq.RunTest(t, testManyQueryRow) }
+func TestManyQueryRow_SQLite(t *testing.T)  { sqlite.RunTest(t, testManyQueryRow) }
+func TestManyQueryRow_MyMySQL(t *testing.T) { myMysql.RunTest(t, testManyQueryRow) }
+func TestManyQueryRow_GoMySQL(t *testing.T) { goMysql.RunTest(t, testManyQueryRow) }
+func TestManyQueryRow_PQ(t *testing.T)      { pq.RunTest(t, testManyQueryRow) }
 
 func testManyQueryRow(t params) {
 	if testing.Short() {
@@ -227,9 +282,10 @@ func testManyQueryRow(t params) {
 	}
 }
 
-func TestTxQuery_SQLite(t *testing.T) { sqlite.RunTest(t, testTxQuery) }
-func TestTxQuery_MySQL(t *testing.T)  { mysql.RunTest(t, testTxQuery) }
-func TestTxQuery_PQ(t *testing.T)     { pq.RunTest(t, testTxQuery) }
+func TestTxQuery_SQLite(t *testing.T)  { sqlite.RunTest(t, testTxQuery) }
+func TestTxQuery_MyMySQL(t *testing.T) { myMysql.RunTest(t, testTxQuery) }
+func TestTxQuery_GoMySQL(t *testing.T) { goMysql.RunTest(t, testTxQuery) }
+func TestTxQuery_PQ(t *testing.T)      { pq.RunTest(t, testTxQuery) }
 
 func testTxQuery(t params) {
 	tx, err := t.Begin()
@@ -268,9 +324,10 @@ func testTxQuery(t params) {
 	}
 }
 
-func TestPreparedStmt_SQLite(t *testing.T) { sqlite.RunTest(t, testPreparedStmt) }
-func TestPreparedStmt_MySQL(t *testing.T)  { mysql.RunTest(t, testPreparedStmt) }
-func TestPreparedStmt_PQ(t *testing.T)     { pq.RunTest(t, testPreparedStmt) }
+func TestPreparedStmt_SQLite(t *testing.T)  { sqlite.RunTest(t, testPreparedStmt) }
+func TestPreparedStmt_MyMySQL(t *testing.T) { myMysql.RunTest(t, testPreparedStmt) }
+func TestPreparedStmt_GoMySQL(t *testing.T) { goMysql.RunTest(t, testPreparedStmt) }
+func TestPreparedStmt_PQ(t *testing.T)      { pq.RunTest(t, testPreparedStmt) }
 
 func testPreparedStmt(t params) {
 	t.mustExec("CREATE TABLE t (count INT)")
@@ -314,17 +371,16 @@ func testPreparedStmt(t params) {
 	}
 }
 
-
 func getenvOk(k string) (v string, ok bool) {
-        v = os.Getenv(k)
-        if v != "" {
-                return v, true
-        }
-        keq := k + "="
-        for _, kv := range os.Environ() {
-                if kv == keq {
-                        return "", true
-                }
-        }
-        return "", false
+	v = os.Getenv(k)
+	if v != "" {
+		return v, true
+	}
+	keq := k + "="
+	for _, kv := range os.Environ() {
+		if kv == keq {
+			return "", true
+		}
+	}
+	return "", false
 }
