@@ -12,17 +12,22 @@ local fixes while waiting for upstream.)
 Then:
 
 $ cd src/sqltest
-$ gotest -v
+$ go test -v
 
 or, most of the time, skipping the annoyingly long tests:
 
-$ gotest -v -short
+$ go test -v -short
 
 
 ****************************************************************************
 For MySQL:
 ****************************************************************************
 mysqladmin -uroot -proot create gosqltest
+
+To set set your MySQL user / password run:
+
+$ export GOSQLTEST_MYSQL_USER=user
+$ export GOSQLTEST_MYSQL_PASS=password
 
 
 ****************************************************************************
