@@ -22,11 +22,13 @@ var (
 	myMysql Tester = &myMysqlDB{}
 	goMysql Tester = &goMysqlDB{}
 	sqlite  Tester = sqliteDB{}
-	pq      Tester = &pqDB{}
+	pq      Tester = &pqDB{driver: "postgres"}
+	libpq   Tester = &pqDB{driver: "libpq"}
 )
 
 // pqDB validates the postgres driver by Blake Mizerany (github.com/bmizerany/pq.go)
 type pqDB struct {
+	driver  string    // either "postgres" or "libpq"
 	once    sync.Once // guards init of running
 	running bool      // whether port 5432 is listening
 }
@@ -46,7 +48,7 @@ func (p *pqDB) RunTest(t *testing.T, fn func(params)) {
 		t.Fatalf("error connecting: %v", err)
 	}
 
-	params := params{pq, t, db}
+	params := params{p, t, db}
 
 	// Drop all tables in the test database.
 	rows, err := db.Query("SELECT table_name FROM information_schema.tables WHERE table_schema = 'public'")
@@ -126,7 +128,7 @@ var qrx = regexp.MustCompile(`\?`)
 
 // q converts "?" characters to $1, $2, $n on postgres.
 func (t params) q(sql string) string {
-	if t.dbType != pq {
+	if t.dbType != pq && t.dbType != libpq {
 		return sql
 	}
 	n := 0
@@ -225,7 +227,7 @@ func sqlBlobParam(t params, size int) string {
 	if t.dbType == sqlite {
 		return fmt.Sprintf("blob[%d]", size)
 	}
-	if t.dbType == pq {
+	if t.dbType == pq || t.dbType == libpq {
 		return "bytea"
 	}
 	return fmt.Sprintf("VARBINARY(%d)", size)
@@ -235,6 +237,7 @@ func TestBlobs_SQLite(t *testing.T)  { sqlite.RunTest(t, testBlobs) }
 func TestBlobs_MyMySQL(t *testing.T) { myMysql.RunTest(t, testBlobs) }
 func TestBlobs_GoMySQL(t *testing.T) { goMysql.RunTest(t, testBlobs) }
 func TestBlobs_PQ(t *testing.T)      { pq.RunTest(t, testBlobs) }
+func TestBlobs_libPQ(t *testing.T)   { libpq.RunTest(t, testBlobs) }
 
 func testBlobs(t params) {
 	var blob = []byte{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15}
@@ -265,6 +268,7 @@ func TestManyQueryRow_SQLite(t *testing.T)  { sqlite.RunTest(t, testManyQueryRow
 func TestManyQueryRow_MyMySQL(t *testing.T) { myMysql.RunTest(t, testManyQueryRow) }
 func TestManyQueryRow_GoMySQL(t *testing.T) { goMysql.RunTest(t, testManyQueryRow) }
 func TestManyQueryRow_PQ(t *testing.T)      { pq.RunTest(t, testManyQueryRow) }
+func TestManyQueryRow_libPQ(t *testing.T)   { libpq.RunTest(t, testManyQueryRow) }
 
 func testManyQueryRow(t params) {
 	if testing.Short() {
@@ -286,6 +290,7 @@ func TestTxQuery_SQLite(t *testing.T)  { sqlite.RunTest(t, testTxQuery) }
 func TestTxQuery_MyMySQL(t *testing.T) { myMysql.RunTest(t, testTxQuery) }
 func TestTxQuery_GoMySQL(t *testing.T) { goMysql.RunTest(t, testTxQuery) }
 func TestTxQuery_PQ(t *testing.T)      { pq.RunTest(t, testTxQuery) }
+func TestTxQuery_libPQ(t *testing.T)   { libpq.RunTest(t, testTxQuery) }
 
 func testTxQuery(t params) {
 	tx, err := t.Begin()
@@ -328,6 +333,7 @@ func TestPreparedStmt_SQLite(t *testing.T)  { sqlite.RunTest(t, testPreparedStmt
 func TestPreparedStmt_MyMySQL(t *testing.T) { myMysql.RunTest(t, testPreparedStmt) }
 func TestPreparedStmt_GoMySQL(t *testing.T) { goMysql.RunTest(t, testPreparedStmt) }
 func TestPreparedStmt_PQ(t *testing.T)      { pq.RunTest(t, testPreparedStmt) }
+func TestPreparedStmt_libPQ(t *testing.T)   { libpq.RunTest(t, testPreparedStmt) }
 
 func testPreparedStmt(t params) {
 	t.mustExec("CREATE TABLE t (count INT)")
