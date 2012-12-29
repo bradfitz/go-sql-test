@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strconv"
+	"strings"
 	"sync"
 	"testing"
 )
@@ -23,7 +24,10 @@ var (
 	goMysql Tester = &goMysqlDB{}
 	sqlite  Tester = sqliteDB{}
 	pq      Tester = &pqDB{}
+	oracle  Tester = &oracleDB{}
 )
+
+const TablePrefix = "gosqltest_"
 
 // pqDB validates the postgres driver by Blake Mizerany (github.com/bmizerany/pq.go)
 type pqDB struct {
@@ -49,7 +53,8 @@ func (p *pqDB) RunTest(t *testing.T, fn func(params)) {
 	params := params{pq, t, db}
 
 	// Drop all tables in the test database.
-	rows, err := db.Query("SELECT table_name FROM information_schema.tables WHERE table_schema = 'public'")
+	rows, err := db.Query("SELECT table_name FROM information_schema.tables WHERE table_name LIKE '" +
+		TablePrefix + "%' AND table_schema = 'public'")
 	if err != nil {
 		t.Fatalf("failed to enumerate tables: %v", err)
 	}
@@ -106,6 +111,22 @@ func (m *goMysqlDB) Running() bool {
 		}
 	})
 	return m.running
+}
+
+type oracleDB struct {
+	once    sync.Once // guards init of running
+	running bool      // whether port 1521 is listening
+}
+
+func (o *oracleDB) Running() bool {
+	o.once.Do(func() {
+		c, err := net.Dial("tcp", "localhost:1521")
+		if err == nil {
+			o.running = true
+			c.Close()
+		}
+	})
+	return o.running
 }
 
 type params struct {
@@ -177,7 +198,7 @@ func (m *myMysqlDB) RunTest(t *testing.T, fn func(params)) {
 	}
 	for rows.Next() {
 		var table string
-		if rows.Scan(&table) == nil {
+		if rows.Scan(&table) == nil && strings.HasPrefix(table, TablePrefix) {
 			params.mustExec("DROP TABLE " + table)
 		}
 	}
@@ -213,6 +234,33 @@ func (m *goMysqlDB) RunTest(t *testing.T, fn func(params)) {
 	}
 	for rows.Next() {
 		var table string
+		if rows.Scan(&table) == nil && strings.HasPrefix(table, TablePrefix) {
+			params.mustExec("DROP TABLE " + table)
+		}
+	}
+
+	fn(params)
+}
+
+func (o *oracleDB) RunTest(t *testing.T, fn func(params)) {
+	if !o.Running() {
+		t.Logf("skipping test; no Oracle running on localhost:1521")
+		return
+	}
+	db, err := sql.Open("goracle", os.Getenv("GOSQLTEST_ORACLE"))
+	if err != nil {
+		t.Fatalf("error connecting: %v", err)
+	}
+
+	params := params{oracle, t, db}
+
+	// Drop all tables in the test database.
+	rows, err := db.Query("SELECT table_name from user_tables WHERE table_name LIKE '" + TablePrefix + "%'")
+	if err != nil {
+		t.Fatalf("failed to enumerate tables: %v", err)
+	}
+	for rows.Next() {
+		var table string
 		if rows.Scan(&table) == nil {
 			params.mustExec("DROP TABLE " + table)
 		}
@@ -235,16 +283,17 @@ func TestBlobs_SQLite(t *testing.T)  { sqlite.RunTest(t, testBlobs) }
 func TestBlobs_MyMySQL(t *testing.T) { myMysql.RunTest(t, testBlobs) }
 func TestBlobs_GoMySQL(t *testing.T) { goMysql.RunTest(t, testBlobs) }
 func TestBlobs_PQ(t *testing.T)      { pq.RunTest(t, testBlobs) }
+func TestBlobs_Oracle(t *testing.T)  { oracle.RunTest(t, testBlobs) }
 
 func testBlobs(t params) {
 	var blob = []byte{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15}
-	t.mustExec("create table foo (id integer primary key, bar " + sqlBlobParam(t, 16) + ")")
-	t.mustExec(t.q("insert into foo (id, bar) values(?,?)"), 0, blob)
+	t.mustExec("create table " + TablePrefix + "foo (id integer primary key, bar " + sqlBlobParam(t, 16) + ")")
+	t.mustExec(t.q("insert into "+TablePrefix+"foo (id, bar) values(?,?)"), 0, blob)
 
 	want := fmt.Sprintf("%x", blob)
 
 	b := make([]byte, 16)
-	err := t.QueryRow(t.q("select bar from foo where id = ?"), 0).Scan(&b)
+	err := t.QueryRow(t.q("select bar from "+TablePrefix+"foo where id = ?"), 0).Scan(&b)
 	got := fmt.Sprintf("%x", b)
 	if err != nil {
 		t.Errorf("[]byte scan: %v", err)
@@ -252,7 +301,7 @@ func testBlobs(t params) {
 		t.Errorf("for []byte, got %q; want %q", got, want)
 	}
 
-	err = t.QueryRow(t.q("select bar from foo where id = ?"), 0).Scan(&got)
+	err = t.QueryRow(t.q("select bar from "+TablePrefix+"foo where id = ?"), 0).Scan(&got)
 	want = string(blob)
 	if err != nil {
 		t.Errorf("string scan: %v", err)
@@ -265,17 +314,18 @@ func TestManyQueryRow_SQLite(t *testing.T)  { sqlite.RunTest(t, testManyQueryRow
 func TestManyQueryRow_MyMySQL(t *testing.T) { myMysql.RunTest(t, testManyQueryRow) }
 func TestManyQueryRow_GoMySQL(t *testing.T) { goMysql.RunTest(t, testManyQueryRow) }
 func TestManyQueryRow_PQ(t *testing.T)      { pq.RunTest(t, testManyQueryRow) }
+func TestManyQueryRow_Oracle(t *testing.T)  { oracle.RunTest(t, testManyQueryRow) }
 
 func testManyQueryRow(t params) {
 	if testing.Short() {
 		t.Logf("skipping in short mode")
 		return
 	}
-	t.mustExec("create table foo (id integer primary key, name varchar(50))")
-	t.mustExec(t.q("insert into foo (id, name) values(?,?)"), 1, "bob")
+	t.mustExec("create table " + TablePrefix + "foo (id integer primary key, name varchar(50))")
+	t.mustExec(t.q("insert into "+TablePrefix+"foo (id, name) values(?,?)"), 1, "bob")
 	var name string
 	for i := 0; i < 10000; i++ {
-		err := t.QueryRow(t.q("select name from foo where id = ?"), 1).Scan(&name)
+		err := t.QueryRow(t.q("select name from "+TablePrefix+"foo where id = ?"), 1).Scan(&name)
 		if err != nil || name != "bob" {
 			t.Fatalf("on query %d: err=%v, name=%q", i, err, name)
 		}
@@ -286,6 +336,7 @@ func TestTxQuery_SQLite(t *testing.T)  { sqlite.RunTest(t, testTxQuery) }
 func TestTxQuery_MyMySQL(t *testing.T) { myMysql.RunTest(t, testTxQuery) }
 func TestTxQuery_GoMySQL(t *testing.T) { goMysql.RunTest(t, testTxQuery) }
 func TestTxQuery_PQ(t *testing.T)      { pq.RunTest(t, testTxQuery) }
+func TestTxQuery_Oracle(t *testing.T)  { oracle.RunTest(t, testTxQuery) }
 
 func testTxQuery(t params) {
 	tx, err := t.Begin()
@@ -294,17 +345,17 @@ func testTxQuery(t params) {
 	}
 	defer tx.Rollback()
 
-	_, err = tx.Exec("create table foo (id integer primary key, name varchar(50))")
+	_, err = tx.Exec("create table " + TablePrefix + "foo (id integer primary key, name varchar(50))")
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	_, err = tx.Exec(t.q("insert into foo (id, name) values(?,?)"), 1, "bob")
+	_, err = tx.Exec(t.q("insert into "+TablePrefix+"foo (id, name) values(?,?)"), 1, "bob")
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	r, err := tx.Query(t.q("select name from foo where id = ?"), 1)
+	r, err := tx.Query(t.q("select name from "+TablePrefix+"foo where id = ?"), 1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -328,14 +379,15 @@ func TestPreparedStmt_SQLite(t *testing.T)  { sqlite.RunTest(t, testPreparedStmt
 func TestPreparedStmt_MyMySQL(t *testing.T) { myMysql.RunTest(t, testPreparedStmt) }
 func TestPreparedStmt_GoMySQL(t *testing.T) { goMysql.RunTest(t, testPreparedStmt) }
 func TestPreparedStmt_PQ(t *testing.T)      { pq.RunTest(t, testPreparedStmt) }
+func TestPreparedStmt_Oracle(t *testing.T)  { oracle.RunTest(t, testPreparedStmt) }
 
 func testPreparedStmt(t params) {
-	t.mustExec("CREATE TABLE t (count INT)")
-	sel, err := t.Prepare("SELECT count FROM t ORDER BY count DESC")
+	t.mustExec("CREATE TABLE " + TablePrefix + "t (count INT)")
+	sel, err := t.Prepare("SELECT count FROM " + TablePrefix + "t ORDER BY count DESC")
 	if err != nil {
 		t.Fatalf("prepare 1: %v", err)
 	}
-	ins, err := t.Prepare(t.q("INSERT INTO t (count) VALUES (?)"))
+	ins, err := t.Prepare(t.q("INSERT INTO " + TablePrefix + "t (count) VALUES (?)"))
 	if err != nil {
 		t.Fatalf("prepare 2: %v", err)
 	}

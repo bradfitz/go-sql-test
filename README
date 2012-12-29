@@ -41,3 +41,18 @@ postgres=# CREATE USER bradfitz WITH ENCRYPTED PASSWORD 'gosqltest';
 CREATE ROLE
 postgres=# GRANT ALL PRIVILEGES ON DATABASE gosqltest to bradfitz;
 GRANT
+
+****************************************************************************
+For Oracle: (replacing "bradfitz" with $USER)
+****************************************************************************
+root@bradfitzlap:/home/bradfitz# service oracle-xe start
+mysqladmin -uroot -proot create gosqltest
+
+To set set your Oracle user/password@DB run:
+
+$ export GOSQLTEST_ORACLE=user/password@db
+
+this will result connecting to database user/password@sid
+The corner case where the sid is a full DSN (with port and everything) is not
+fully managed: only port 1521 on localhost is checked for accepting connections.
+If you really need the full DSN support, please mail me!
