@@ -272,7 +272,7 @@ func (o *oracleDB) RunTest(t *testing.T, fn func(params)) {
 	var table sql.NullString
 	for rows.Next() {
 		err = rows.Scan(&table)
-		t.Logf("Next => table=%+v err=%s", table, err)
+		// t.Logf("Next => table=%+v err=%s", table, err)
 		if err != nil {
 			t.Fatalf("error reading table name: %s", err)
 		} else if !table.Valid {
