@@ -54,7 +54,8 @@ func (tr Row) Str(nn int) (str string) {
 	return
 }
 
-const _MAX_INT = int(^uint(0) >> 1)
+const _MAX_INT = int64(^uint64(0) >> 1)
+const _MAX_INT32 = int32(^uint32(0) >> 1)
 const _MIN_INT = -_MAX_INT - 1
 
 // Get the nn-th value and return it as int (0 if NULL). Return error if
@@ -83,7 +84,7 @@ func (tr Row) IntErr(nn int) (val int, err error) {
 			err = &strconv.NumError{fn, fmt.Sprint(data), errRange}
 		}
 	case uint32:
-		if data <= uint32(_MAX_INT) {
+		if data <= uint32(_MAX_INT32) {
 			val = int(data)
 		} else {
 			err = &strconv.NumError{fn, fmt.Sprint(data), errRange}
@@ -144,7 +145,7 @@ func (tr Row) UintErr(nn int) (val uint, err error) {
 		}
 	case int8, int16, int32, int64:
 		v := reflect.ValueOf(data).Int()
-		if v >= 0 && v <= int64(_MAX_UINT) {
+		if v >= 0 && v <= int64(_MAX_INT) {
 			val = uint(v)
 		} else {
 			err = &strconv.NumError{fn, fmt.Sprint(data), errRange}
