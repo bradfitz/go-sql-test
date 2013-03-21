@@ -41,3 +41,48 @@ postgres=# CREATE USER bradfitz WITH ENCRYPTED PASSWORD 'gosqltest';
 CREATE ROLE
 postgres=# GRANT ALL PRIVILEGES ON DATABASE gosqltest to bradfitz;
 GRANT
+
+****************************************************************************
+For Oracle: (replacing "bradfitz" with $USER)
+****************************************************************************
+root@bradfitzlap:/home/bradfitz# service oracle-xe start
+Iff you don't have a nice test database, then i.e.:
+sqlplus /nolog <<EOF
+CONN sys/sys AS SYSDBA
+CREATE DATABASE DB 
+  USER SYS IDENTIFIED BY SYS
+  USER SYSTEM IDENTIFIED BY SYSTEM
+  USER user IDENTIFIED BY password
+  LOGFILE GROUP 1 ('/tmp/testdb-redo01.log') SIZE 20M
+  MAXLOGFILES 5 MAXLOGMEMBERS 5 MAXLOGHISTORY 1
+  MAXDATAFILES 100 MAXINSTANCES 1 
+  CHARACTER SET AL32UTF8
+  NATIONAL CHARACTER SET AL32UTF8
+  DATAFILE '/tmp/testdb-data01.dbf'
+  EXTENT MANAGEMENT LOCAL
+  DEFAULT TEMPORARY TABLESPACE temp 
+    DATAFILE '/tmp/testdb-temp01.dbf' SIZE 10M REUSE
+  UNDO TABLESPACE undotbs
+    DATAFILE '/tmp/testdb-undo01.dbf' SIZE 10M REUSE 
+    AUTOEXTEND ON NEXT 512K MAXSIZE 200M;
+CREATE TABLESPACE data LOGGING
+  DATAFILE '/tmp/testdb-data01.dbf' SIZE 10M REUSE 
+  AUTOEXTEND ON NEXT 512K MAXSIZE 100M EXTENT MANAGEMENT LOCAL;
+CREATE TABLESPACE indx LOGGING
+  DATAFILE '/tmp/testdb-indx01.dbf' SIZE 10M REUSE 
+  AUTOEXTEND ON NEXT 512K MAXSIZE 100M EXTENT MANAGEMENT LOCAL;
+
+EXIT
+EOF
+
+(More can be read at http://docs.oracle.com/cd/B10501_01/server.920/a96521/create.htm#1003614)
+
+
+To set set your Oracle user/password@DB run:
+
+$ export GOSQLTEST_ORACLE=user/password@db
+
+this will result connecting to database user/password@sid
+The corner case where the sid is a full DSN (with port and everything) is not
+fully managed: only port 1521 on localhost is checked for accepting connections.
+If you really need the full DSN support, please mail me!
