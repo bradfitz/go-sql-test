@@ -173,7 +173,7 @@ func (sqliteDB) RunTest(t *testing.T, fn func(params)) {
 	if err != nil {
 		t.Fatalf("foo.db open fail: %v", err)
 	}
-	fn(params{sqlite, t, db})
+    fn(params{sqlite, t, db})
 }
 
 func (m *myMysqlDB) RunTest(t *testing.T, fn func(params)) {
@@ -400,11 +400,11 @@ func TestPreparedStmt_PQ(t *testing.T)      { pq.RunTest(t, testPreparedStmt) }
 func TestPreparedStmt_Oracle(t *testing.T)  { oracle.RunTest(t, testPreparedStmt) }
 
 func testPreparedStmt(t params) {
+	t.mustExec("CREATE TABLE " + TablePrefix + "t (count INT)")
 	sel, err := t.Prepare("SELECT count FROM " + TablePrefix + "t ORDER BY count DESC")
 	if err != nil {
 		t.Fatalf("prepare 1: %v", err)
 	}
-	t.mustExec("CREATE TABLE " + TablePrefix + "t (count INT)")
 	ins, err := t.Prepare(t.q("INSERT INTO " + TablePrefix + "t (count) VALUES (?)"))
 	if err != nil {
 		t.Fatalf("prepare 2: %v", err)
