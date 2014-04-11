@@ -3,12 +3,19 @@ package pq
 import (
 	"bytes"
 	"encoding/binary"
+	"github.com/lib/pq/oid"
 )
 
 type readBuf []byte
 
 func (b *readBuf) int32() (n int) {
-	n = int(binary.BigEndian.Uint32(*b))
+	n = int(int32(binary.BigEndian.Uint32(*b)))
+	*b = (*b)[4:]
+	return
+}
+
+func (b *readBuf) oid() (n oid.Oid) {
+	n = oid.Oid(binary.BigEndian.Uint32(*b))
 	*b = (*b)[4:]
 	return
 }
@@ -19,10 +26,8 @@ func (b *readBuf) int16() (n int) {
 	return
 }
 
-var stringTerm = []byte{0}
-
 func (b *readBuf) string() string {
-	i := bytes.Index(*b, stringTerm)
+	i := bytes.IndexByte(*b, 0)
 	if i < 0 {
 		errorf("invalid message format; expected string terminator")
 	}
@@ -42,12 +47,6 @@ func (b *readBuf) byte() byte {
 }
 
 type writeBuf []byte
-
-func newWriteBuf(c byte) *writeBuf {
-	b := make(writeBuf, 5)
-	b[0] = c
-	return &b
-}
 
 func (b *writeBuf) int32(n int) {
 	x := make([]byte, 4)
