@@ -86,3 +86,13 @@ this will result connecting to database user/password@sid
 The corner case where the sid is a full DSN (with port and everything) is not
 fully managed: only port 1521 on localhost is checked for accepting connections.
 If you really need the full DSN support, please mail me!
+
+****************************************************************************
+For MSSQL:
+****************************************************************************
+osql -Q "CREATE DATABASE gotestsql"
+
+To set set your MSSQL user / password run:
+
+$ export GOSQLTEST_MSSQL_USER=user
+$ export GOSQLTEST_MSSQL_PASS=password
