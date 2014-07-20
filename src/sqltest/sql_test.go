@@ -25,6 +25,7 @@ var (
 	sqlite  Tester = sqliteDB{}
 	pq      Tester = &pqDB{}
 	oracle  Tester = &oracleDB{}
+	mssql   Tester = &mssqlDB{}
 )
 
 const TablePrefix = "gosqltest_"
@@ -127,6 +128,22 @@ func (o *oracleDB) Running() bool {
 		}
 	})
 	return o.running
+}
+
+type mssqlDB struct {
+	once    sync.Once // guards init of running
+	running bool      //whether port 1433 is listening
+}
+
+func (ms *mssqlDB) Running() bool {
+	ms.once.Do(func() {
+		c, err := net.Dial("tcp", "localhost:1433")
+		if err == nil {
+			ms.running = true
+			c.Close()
+		}
+	})
+	return ms.running
 }
 
 type params struct {
@@ -285,9 +302,52 @@ func (o *oracleDB) RunTest(t *testing.T, fn func(params)) {
 	fn(params)
 }
 
+func (ms *mssqlDB) RunTest(t *testing.T, fn func(params)) {
+	if !ms.Running() {
+		t.Logf("skipping test; no SQL Server running on localhost:1433")
+		return
+	}
+	user := os.Getenv("GOSQLTEST_MSSQL_USER")
+	if user == "" {
+		user = os.Getenv("USER")
+	}
+	pass, ok := getenvOk("GOSQLTEST_MSSQL_PASS")
+	if !ok {
+		pass = "gosqltest"
+	}
+	db, err := sql.Open("mssql", fmt.Sprintf("server=localhost;database=gosqltest;user id=%s;password=%s", user, pass))
+	if err != nil {
+		t.Fatalf("error connecting: %v", err)
+	}
+	defer db.Close()
+
+	params := params{ms, t, db}
+
+	// Drop all tables in the test database.
+	rows, err := db.Query(`SELECT table_name FROM INFORMATION_SCHEMA.TABLES
+		WHERE TABLE_TYPE = 'BASE TABLE' 
+		AND UPPER(table_name) LIKE UPPER('` + TablePrefix + `%')`)
+	if err != nil {
+		t.Fatalf("failed to enumerate tables: %v", err)
+	}
+	var table sql.NullString
+	for rows.Next() {
+		err = rows.Scan(&table)
+		// t.Logf("Next => table=%+v err=%s", table, err)
+		if err != nil {
+			t.Fatalf("error reading table name: %s", err)
+		} else if !table.Valid {
+			t.Fatalf("error reading table name: null value!")
+		} else {
+			params.mustExec("DROP TABLE " + table.String)
+		}
+	}
+
+	fn(params)
+}
 func sqlBlobParam(t params, size int) string {
 	switch t.dbType {
-	case  sqlite:
+	case sqlite:
 		return fmt.Sprintf("blob[%d]", size)
 	case pq:
 		return "bytea"
@@ -302,6 +362,7 @@ func TestBlobs_MyMySQL(t *testing.T) { myMysql.RunTest(t, testBlobs) }
 func TestBlobs_GoMySQL(t *testing.T) { goMysql.RunTest(t, testBlobs) }
 func TestBlobs_PQ(t *testing.T)      { pq.RunTest(t, testBlobs) }
 func TestBlobs_Oracle(t *testing.T)  { oracle.RunTest(t, testBlobs) }
+func TestBlobs_MSSQL(t *testing.T)   { mssql.RunTest(t, testBlobs) }
 
 func testBlobs(t params) {
 	var blob = []byte{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15}
@@ -333,6 +394,7 @@ func TestManyQueryRow_MyMySQL(t *testing.T) { myMysql.RunTest(t, testManyQueryRo
 func TestManyQueryRow_GoMySQL(t *testing.T) { goMysql.RunTest(t, testManyQueryRow) }
 func TestManyQueryRow_PQ(t *testing.T)      { pq.RunTest(t, testManyQueryRow) }
 func TestManyQueryRow_Oracle(t *testing.T)  { oracle.RunTest(t, testManyQueryRow) }
+func TestManyQueryRow_MSSQL(t *testing.T)   { mssql.RunTest(t, testManyQueryRow) }
 
 func testManyQueryRow(t params) {
 	if testing.Short() {
@@ -355,6 +417,7 @@ func TestTxQuery_MyMySQL(t *testing.T) { myMysql.RunTest(t, testTxQuery) }
 func TestTxQuery_GoMySQL(t *testing.T) { goMysql.RunTest(t, testTxQuery) }
 func TestTxQuery_PQ(t *testing.T)      { pq.RunTest(t, testTxQuery) }
 func TestTxQuery_Oracle(t *testing.T)  { oracle.RunTest(t, testTxQuery) }
+func TestTxQuery_MSSQL(t *testing.T)   { mssql.RunTest(t, testTxQuery) }
 
 func testTxQuery(t params) {
 	tx, err := t.Begin()
@@ -398,6 +461,7 @@ func TestPreparedStmt_MyMySQL(t *testing.T) { myMysql.RunTest(t, testPreparedStm
 func TestPreparedStmt_GoMySQL(t *testing.T) { goMysql.RunTest(t, testPreparedStmt) }
 func TestPreparedStmt_PQ(t *testing.T)      { pq.RunTest(t, testPreparedStmt) }
 func TestPreparedStmt_Oracle(t *testing.T)  { oracle.RunTest(t, testPreparedStmt) }
+func TestPreparedStmt_MSSQL(t *testing.T)   { mssql.RunTest(t, testPreparedStmt) }
 
 func testPreparedStmt(t params) {
 	t.mustExec("CREATE TABLE " + TablePrefix + "t (count INT)")
