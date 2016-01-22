@@ -20,11 +20,12 @@ type Tester interface {
 }
 
 var (
-	myMysql Tester = &myMysqlDB{}
-	goMysql Tester = &goMysqlDB{}
-	sqlite  Tester = sqliteDB{}
-	pq      Tester = &pqDB{}
-	oracle  Tester = &oracleDB{}
+	myMysql  Tester = &myMysqlDB{}
+	goMysql  Tester = &goMysqlDB{}
+	vaqMysql Tester = &vaqMysqlDB{}
+	sqlite   Tester = sqliteDB{}
+	pq       Tester = &pqDB{}
+	oracle   Tester = &oracleDB{}
 )
 
 const TablePrefix = "gosqltest_"
@@ -103,6 +104,22 @@ type goMysqlDB struct {
 }
 
 func (m *goMysqlDB) Running() bool {
+	m.once.Do(func() {
+		c, err := net.Dial("tcp", "localhost:3306")
+		if err == nil {
+			m.running = true
+			c.Close()
+		}
+	})
+	return m.running
+}
+
+type vaqMysqlDB struct {
+	once    sync.Once // guards init of running
+	running bool      // whether port 3306 is listening
+}
+
+func (m *vaqMysqlDB) Running() bool {
 	m.once.Do(func() {
 		c, err := net.Dial("tcp", "localhost:3306")
 		if err == nil {
@@ -250,6 +267,43 @@ func (m *goMysqlDB) RunTest(t *testing.T, fn func(params)) {
 	fn(params)
 }
 
+func (m *vaqMysqlDB) RunTest(t *testing.T, fn func(params)) {
+	if !m.Running() {
+		t.Logf("skipping test; no MySQL running on localhost:3306")
+		return
+	}
+	user := os.Getenv("GOSQLTEST_MYSQL_USER")
+	if user == "" {
+		user = "root"
+	}
+	pass, ok := getenvOk("GOSQLTEST_MYSQL_PASS")
+	if !ok {
+		pass = "root"
+	}
+	dbName := "gosqltest"
+	db, err := sql.Open("vaquita", fmt.Sprintf("mysql://%s:%s@localhost/%s", user, pass, dbName))
+	if err != nil {
+		t.Fatalf("error connecting: %v", err)
+	}
+
+	params := params{vaqMysql, t, db}
+
+	// Drop all tables in the test database.
+	rows, err := db.Query("SHOW TABLES")
+	if err != nil {
+		t.Fatalf("failed to enumerate tables: %v", err)
+	}
+	for rows.Next() {
+		var table string
+		if rows.Scan(&table) == nil &&
+			strings.HasPrefix(strings.ToLower(table), strings.ToLower(TablePrefix)) {
+			params.mustExec("DROP TABLE " + table)
+		}
+	}
+
+	fn(params)
+}
+
 func (o *oracleDB) RunTest(t *testing.T, fn func(params)) {
 	if !o.Running() {
 		t.Logf("skipping test; no Oracle running on localhost:1521")
@@ -287,7 +341,7 @@ func (o *oracleDB) RunTest(t *testing.T, fn func(params)) {
 
 func sqlBlobParam(t params, size int) string {
 	switch t.dbType {
-	case  sqlite:
+	case sqlite:
 		return fmt.Sprintf("blob[%d]", size)
 	case pq:
 		return "bytea"
@@ -297,11 +351,12 @@ func sqlBlobParam(t params, size int) string {
 	return fmt.Sprintf("VARBINARY(%d)", size)
 }
 
-func TestBlobs_SQLite(t *testing.T)  { sqlite.RunTest(t, testBlobs) }
-func TestBlobs_MyMySQL(t *testing.T) { myMysql.RunTest(t, testBlobs) }
-func TestBlobs_GoMySQL(t *testing.T) { goMysql.RunTest(t, testBlobs) }
-func TestBlobs_PQ(t *testing.T)      { pq.RunTest(t, testBlobs) }
-func TestBlobs_Oracle(t *testing.T)  { oracle.RunTest(t, testBlobs) }
+func TestBlobs_SQLite(t *testing.T)   { sqlite.RunTest(t, testBlobs) }
+func TestBlobs_MyMySQL(t *testing.T)  { myMysql.RunTest(t, testBlobs) }
+func TestBlobs_GoMySQL(t *testing.T)  { goMysql.RunTest(t, testBlobs) }
+func TestBlobs_VaqMySQL(t *testing.T) { vaqMysql.RunTest(t, testBlobs) }
+func TestBlobs_PQ(t *testing.T)       { pq.RunTest(t, testBlobs) }
+func TestBlobs_Oracle(t *testing.T)   { oracle.RunTest(t, testBlobs) }
 
 func testBlobs(t params) {
 	var blob = []byte{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15}
@@ -328,11 +383,12 @@ func testBlobs(t params) {
 	}
 }
 
-func TestManyQueryRow_SQLite(t *testing.T)  { sqlite.RunTest(t, testManyQueryRow) }
-func TestManyQueryRow_MyMySQL(t *testing.T) { myMysql.RunTest(t, testManyQueryRow) }
-func TestManyQueryRow_GoMySQL(t *testing.T) { goMysql.RunTest(t, testManyQueryRow) }
-func TestManyQueryRow_PQ(t *testing.T)      { pq.RunTest(t, testManyQueryRow) }
-func TestManyQueryRow_Oracle(t *testing.T)  { oracle.RunTest(t, testManyQueryRow) }
+func TestManyQueryRow_SQLite(t *testing.T)   { sqlite.RunTest(t, testManyQueryRow) }
+func TestManyQueryRow_MyMySQL(t *testing.T)  { myMysql.RunTest(t, testManyQueryRow) }
+func TestManyQueryRow_GoMySQL(t *testing.T)  { goMysql.RunTest(t, testManyQueryRow) }
+func TestManyQueryRow_VaqMySQL(t *testing.T) { vaqMysql.RunTest(t, testManyQueryRow) }
+func TestManyQueryRow_PQ(t *testing.T)       { pq.RunTest(t, testManyQueryRow) }
+func TestManyQueryRow_Oracle(t *testing.T)   { oracle.RunTest(t, testManyQueryRow) }
 
 func testManyQueryRow(t params) {
 	if testing.Short() {
@@ -350,11 +406,12 @@ func testManyQueryRow(t params) {
 	}
 }
 
-func TestTxQuery_SQLite(t *testing.T)  { sqlite.RunTest(t, testTxQuery) }
-func TestTxQuery_MyMySQL(t *testing.T) { myMysql.RunTest(t, testTxQuery) }
-func TestTxQuery_GoMySQL(t *testing.T) { goMysql.RunTest(t, testTxQuery) }
-func TestTxQuery_PQ(t *testing.T)      { pq.RunTest(t, testTxQuery) }
-func TestTxQuery_Oracle(t *testing.T)  { oracle.RunTest(t, testTxQuery) }
+func TestTxQuery_SQLite(t *testing.T)   { sqlite.RunTest(t, testTxQuery) }
+func TestTxQuery_MyMySQL(t *testing.T)  { myMysql.RunTest(t, testTxQuery) }
+func TestTxQuery_GoMySQL(t *testing.T)  { goMysql.RunTest(t, testTxQuery) }
+func TestTxQuery_VaqMySQL(t *testing.T) { vaqMysql.RunTest(t, testTxQuery) }
+func TestTxQuery_PQ(t *testing.T)       { pq.RunTest(t, testTxQuery) }
+func TestTxQuery_Oracle(t *testing.T)   { oracle.RunTest(t, testTxQuery) }
 
 func testTxQuery(t params) {
 	tx, err := t.Begin()
@@ -393,11 +450,12 @@ func testTxQuery(t params) {
 	}
 }
 
-func TestPreparedStmt_SQLite(t *testing.T)  { sqlite.RunTest(t, testPreparedStmt) }
-func TestPreparedStmt_MyMySQL(t *testing.T) { myMysql.RunTest(t, testPreparedStmt) }
-func TestPreparedStmt_GoMySQL(t *testing.T) { goMysql.RunTest(t, testPreparedStmt) }
-func TestPreparedStmt_PQ(t *testing.T)      { pq.RunTest(t, testPreparedStmt) }
-func TestPreparedStmt_Oracle(t *testing.T)  { oracle.RunTest(t, testPreparedStmt) }
+func TestPreparedStmt_SQLite(t *testing.T)   { sqlite.RunTest(t, testPreparedStmt) }
+func TestPreparedStmt_MyMySQL(t *testing.T)  { myMysql.RunTest(t, testPreparedStmt) }
+func TestPreparedStmt_GoMySQL(t *testing.T)  { goMysql.RunTest(t, testPreparedStmt) }
+func TestPreparedStmt_VaqMySQL(t *testing.T) { vaqMysql.RunTest(t, testPreparedStmt) }
+func TestPreparedStmt_PQ(t *testing.T)       { pq.RunTest(t, testPreparedStmt) }
+func TestPreparedStmt_Oracle(t *testing.T)   { oracle.RunTest(t, testPreparedStmt) }
 
 func testPreparedStmt(t params) {
 	t.mustExec("CREATE TABLE " + TablePrefix + "t (count INT)")
